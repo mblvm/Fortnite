@@ -1404,8 +1404,20 @@ function endGame(win){
 }
 
 // ============================================================ ввод
+// клавиши по физическому коду — работает на любой раскладке (русской тоже)
+function gameKey(e){
+  const c = e.code;
+  if(c==='Space') return ' ';
+  if(c==='ArrowUp') return 'w';
+  if(c==='ArrowDown') return 's';
+  if(c==='ArrowLeft') return 'a';
+  if(c==='ArrowRight') return 'd';
+  if(c && c.startsWith('Key')) return c.slice(3).toLowerCase();
+  if(c && c.startsWith('Digit')) return c.slice(5);
+  return e.key.toLowerCase();
+}
 addEventListener('keydown', e=>{
-  const k = e.key.toLowerCase();
+  const k = gameKey(e);
   keys[k] = true;
   if(k===' ') e.preventDefault();
   if(!state || state.phase!=='game') return;
@@ -1423,7 +1435,7 @@ addEventListener('keydown', e=>{
     if(p.slots[i]) p.slot = i;
   }
 });
-addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; if(e.key===' ') keys[' '] = false; });
+addEventListener('keyup', e=>{ keys[gameKey(e)] = false; });
 
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
