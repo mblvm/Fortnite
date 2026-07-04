@@ -62,7 +62,8 @@
     <b>ПКМ</b> — построить стену перед собой (10 материалов) &nbsp;·&nbsp; <b>E</b> — подобрать / открыть сундук<br>
     <b>R</b> — перезарядка &nbsp;·&nbsp; <b>1–5</b> — слоты &nbsp;·&nbsp; <b>Пробел</b> — прыгнуть с автобуса &nbsp;·&nbsp; <b>M</b> — звук<br>
     <b>Esc</b> — освободить мышь, клик по экрану — вернуться в игру<br>
-    Добывай материалы киркой из деревьев и камней. Последний выживший побеждает!
+    Добывай материалы киркой: <b>дерево — 3 удара</b>, <b>камень — 4</b> (полоска прочности видна над целью).<br>
+    Последний выживший побеждает!
   </div>
 </div>
 
@@ -83,6 +84,8 @@ let W = 0, H = 0;
 
 const WORLD = 3200;          // размер карты
 const TILE = 64;             // клетка строительства
+const TREE_HP = 3;           // ударов киркой до слома дерева
+const ROCK_HP = 4;           // ударов киркой до слома камня
 const WALL_H = 62;           // высота стены
 const BUS_ALT = 340;         // высота автобуса
 const AIR_ALT = 300;         // высота начала прыжка
@@ -223,8 +226,8 @@ function genWorld(s){
     }
     return { x:rand(margin,WORLD-margin), y:rand(margin,WORLD-margin) };
   };
-  for(let i=0;i<70;i++){ const p=freeSpot(90,s.trees); s.trees.push({x:p.x,y:p.y,hp:3,r:22,seed:Math.random()}); }
-  for(let i=0;i<26;i++){ const p=freeSpot(140,s.rocks); s.rocks.push({x:p.x,y:p.y,hp:4,r:26,seed:Math.random()}); }
+  for(let i=0;i<70;i++){ const p=freeSpot(90,s.trees); s.trees.push({x:p.x,y:p.y,hp:TREE_HP,r:22,seed:Math.random()}); }
+  for(let i=0;i<26;i++){ const p=freeSpot(140,s.rocks); s.rocks.push({x:p.x,y:p.y,hp:ROCK_HP,r:26,seed:Math.random()}); }
   for(let i=0;i<22;i++){ const p=freeSpot(260,s.chests); s.chests.push({x:p.x,y:p.y,open:false}); }
   for(let i=0;i<34;i++){
     const p = freeSpot(120,s.loot);
@@ -380,36 +383,48 @@ function spawnBullets(s,shooter,gun,angle){
 }
 
 // удар киркой / ближний бой
+const MELEE_RANGE = 82, MELEE_ARC = 1.15;
+// какой ресурс (дерево/камень) сейчас под ударом кирки — одна и та же
+// проверка используется и для самого удара, и для подсказки на HUD,
+// поэтому индикатор всегда совпадает с реальным попаданием
+function meleeTargetResource(s,e){
+  for(const t of s.trees)
+    if(t.hp>0 && dist(e.x,e.y,t.x,t.y)<MELEE_RANGE+t.r && angDiff(e.aim,Math.atan2(t.y-e.y,t.x-e.x))<MELEE_ARC)
+      return { obj:t, tree:true };
+  for(const r of s.rocks)
+    if(r.hp>0 && dist(e.x,e.y,r.x,r.y)<MELEE_RANGE+r.r && angDiff(e.aim,Math.atan2(r.y-e.y,r.x-e.x))<MELEE_ARC)
+      return { obj:r, tree:false };
+  return null;
+}
 function meleeSwing(s,e){
-  const RANGE = 82, ARC = 1.15;
   sfx.pickaxe();
   burst(s, e.x+Math.cos(e.aim)*50, e.y+Math.sin(e.aim)*50, '#ffe95c', 4, 90);
-  // деревья
-  for(const t of s.trees){
-    if(t.hp>0 && dist(e.x,e.y,t.x,t.y)<RANGE+t.r && angDiff(e.aim,Math.atan2(t.y-e.y,t.x-e.x))<ARC){
-      t.hp--; e.mats = Math.min(999, e.mats+10);
-      dmgNum(s,t.x,t.y,'+10','#8fd9ff',70); burst(s,t.x,t.y,'#3f8f4a',6,100);
-      if(t.hp<=0){ burst(s,t.x,t.y,'#2f6f3a',14,160); removeMesh(t); }
-      return;
+  // деревья и камни
+  const tgt = meleeTargetResource(s,e);
+  if(tgt){
+    const o = tgt.obj;
+    o.hp--; o.hitT = s.time;
+    e.mats = Math.min(999, e.mats+10);
+    dmgNum(s,o.x,o.y,'+10','#8fd9ff',tgt.tree?70:50);
+    burst(s,o.x,o.y,tgt.tree?'#3f8f4a':'#8b8f99',6,100);
+    if(o.hp<=0){
+      dmgNum(s,o.x,o.y,'СЛОМАНО!','#ffe95c',tgt.tree?85:65);
+      burst(s,o.x,o.y,tgt.tree?'#2f6f3a':'#6b6f77',14,160);
+      removeMesh(o);
+      if(!tgt.tree) s.rocks.splice(s.rocks.indexOf(o),1);
+      if(e.isPlayer) sfx.breakW();
     }
-  }
-  for(const r of s.rocks){
-    if(r.hp>0 && dist(e.x,e.y,r.x,r.y)<RANGE+r.r && angDiff(e.aim,Math.atan2(r.y-e.y,r.x-e.x))<ARC){
-      r.hp--; e.mats = Math.min(999, e.mats+10);
-      dmgNum(s,r.x,r.y,'+10','#8fd9ff',50); burst(s,r.x,r.y,'#8b8f99',6,100);
-      if(r.hp<=0){ burst(s,r.x,r.y,'#6b6f77',14,160); removeMesh(r); s.rocks.splice(s.rocks.indexOf(r),1); }
-      return;
-    }
+    return;
   }
   // стены
-  const tx = e.x+Math.cos(e.aim)*RANGE*.7, ty = e.y+Math.sin(e.aim)*RANGE*.7;
+  const tx = e.x+Math.cos(e.aim)*MELEE_RANGE*.7, ty = e.y+Math.sin(e.aim)*MELEE_RANGE*.7;
   const gx = Math.floor(tx/TILE), gy = Math.floor(ty/TILE);
   if(s.walls.has(wallKey(gx,gy))){ damageWall(s,gx,gy,50); return; }
   // враги
   const all = [s.player,...s.bots];
   for(const o of all){
-    if(o!==e && !o.dead && o.spawned!==false && dist(e.x,e.y,o.x,o.y)<RANGE+o.r
-       && angDiff(e.aim,Math.atan2(o.y-e.y,o.x-e.x))<ARC){
+    if(o!==e && !o.dead && o.spawned!==false && dist(e.x,e.y,o.x,o.y)<MELEE_RANGE+o.r
+       && angDiff(e.aim,Math.atan2(o.y-e.y,o.x-e.x))<MELEE_ARC){
       hurt(s,o,20,e,'Кирка'); return;
     }
   }
@@ -1240,8 +1255,20 @@ function sync3D(){
 
   // статика (лениво создаём меши)
   for(const t of s.trees) if(t.hp>0 && !t.mesh){ t.mesh = makeTreeMesh(t); worldG.add(t.mesh); }
-  for(const t of s.trees) if(t.mesh) t.mesh.userData.leafMat.color.set(t.hp>=3?0x2f8f3f:t.hp===2?0x3fa04a:0x59b258);
-  for(const r of s.rocks) if(!r.mesh){ r.mesh = makeRockMesh(r); worldG.add(r.mesh); }
+  for(const t of s.trees) if(t.mesh){
+    // дерево бледнеет, «худеет» с каждым ударом и трясётся при попадании
+    t.mesh.userData.leafMat.color.set(t.hp>=TREE_HP?0x2f8f3f:t.hp===2?0x4aa04a:0x74b768);
+    const hitK = t.hitT!==undefined ? Math.max(0,.35-(s.time-t.hitT)) : 0;
+    t.mesh.scale.setScalar(.6+.4*t.hp/TREE_HP);
+    t.mesh.rotation.z = hitK>0 ? Math.sin(s.time*45)*hitK*.5 : 0;
+  }
+  for(const r of s.rocks){
+    if(!r.mesh){ r.mesh = makeRockMesh(r); worldG.add(r.mesh); }
+    // камень тоже уменьшается и вздрагивает от ударов
+    const hitK = r.hitT!==undefined ? Math.max(0,.35-(s.time-r.hitT)) : 0;
+    const w = (.65+.35*r.hp/ROCK_HP) * (1+Math.sin(s.time*45)*hitK*.2);
+    r.mesh.scale.set(r.r*1.15*w, r.r*.8*w, r.r*1.05*w);
+  }
   for(const [,w] of s.walls){
     if(!w.mesh){ w.mesh = makeWallMesh(w); worldG.add(w.mesh); }
     w.mesh.material.color.copy(wallColLow).lerp(new THREE.Color(0xffffff), clamp(w.hp/w.max,.25,1));
@@ -1433,6 +1460,50 @@ function drawHUD(s){
     }
   }
 
+  // --- добыча: прочность дерева/камня под прицелом + подсказки ---
+  if(!p.dead && !p.onBus && p.air<=0){
+    const held = WEAPONS[curGun(p).type];
+    const tgt = meleeTargetResource(s,p);
+    let mineHint = '', hintCol = '#9be89b';
+    if(tgt){
+      const o = tgt.obj, maxHp = tgt.tree?TREE_HP:ROCK_HP;
+      const pt = project(o.x, tgt.tree?96:o.r*1.4+22, o.y);
+      if(pt){
+        // сегменты прочности: сколько ударов осталось
+        const segW = 24, sgap = 4, tw = maxHp*segW+(maxHp-1)*sgap;
+        hctx.fillStyle = 'rgba(0,0,0,.55)';
+        roundRect(pt.x-tw/2-7, pt.y-8, tw+14, 16, 6); hctx.fill();
+        for(let i=0;i<maxHp;i++){
+          hctx.fillStyle = i<o.hp ? (tgt.tree?'#6be36b':'#b9c2cf') : 'rgba(255,255,255,.18)';
+          hctx.fillRect(pt.x-tw/2+i*(segW+sgap), pt.y-4, segW, 8);
+        }
+        hctx.textAlign = 'center';
+        hctx.font = 'bold 13px Arial';
+        hctx.fillStyle = 'rgba(0,0,0,.6)'; hctx.fillText('ударов до слома: '+o.hp, pt.x+1, pt.y-14);
+        hctx.fillStyle = '#fff'; hctx.fillText('ударов до слома: '+o.hp, pt.x, pt.y-15);
+      }
+      if(held.melee) mineHint = 'ЛКМ — рубить '+(tgt.tree?'дерево':'камень')+' (+10 материалов за удар)';
+      else { mineHint = 'Возьми кирку (клавиша 1), чтобы рубить '+(tgt.tree?'дерево':'камень'); hintCol = '#ffe95c'; }
+    } else if(held.melee){
+      // кирка в руках, но удар не достанет — объясняем, почему
+      let near = null, nd = 240, nTree = false;
+      for(const t of s.trees) if(t.hp>0){ const d = dist(p.x,p.y,t.x,t.y); if(d<nd){ nd = d; near = t; nTree = true; } }
+      for(const r of s.rocks) if(r.hp>0){ const d = dist(p.x,p.y,r.x,r.y); if(d<nd){ nd = d; near = r; nTree = false; } }
+      if(near){
+        mineHint = nd > MELEE_RANGE+near.r
+          ? 'Подойди ближе к '+(nTree?'дереву':'камню')+', чтобы рубить'
+          : 'Повернись к '+(nTree?'дереву':'камню')+', чтобы рубить';
+        hintCol = '#ffe95c';
+      }
+    }
+    if(mineHint){
+      hctx.textAlign = 'center';
+      hctx.font = 'bold 17px Arial';
+      hctx.fillStyle = 'rgba(0,0,0,.6)'; hctx.fillText(mineHint, W/2+1, H*.68+1);
+      hctx.fillStyle = hintCol; hctx.fillText(mineHint, W/2, H*.68);
+    }
+  }
+
   hctx.textAlign = 'left';
 
   // --- левый низ: хп/щит ---
@@ -1563,7 +1634,7 @@ function drawHUD(s){
   // подсказка в начале
   if(z.active && s.time < 40 && !p.onBus){
     hctx.font = '13px Arial'; hctx.fillStyle = 'rgba(255,255,255,.75)';
-    hctx.fillText('ПКМ — стена перед собой · E — подобрать · кирка по деревьям — материалы', 24, H-140);
+    hctx.fillText('ПКМ — стена перед собой · E — подобрать · дерево — 3 удара киркой, камень — 4', 24, H-140);
   }
 
   // мышь не захвачена
