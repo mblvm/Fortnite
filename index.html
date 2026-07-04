@@ -537,9 +537,9 @@ function updatePlayer(s,dt){
   p.aim = yaw;                        // прицел = направление камеры
   if(p.onBus) return;                 // прыжок обрабатывается в keydown
 
-  // движение относительно камеры
-  const fwd = (keys['w']?1:0)-(keys['s']?1:0);
-  const str = (keys['d']?1:0)-(keys['a']?1:0);
+  // движение относительно камеры (только при захваченной мыши)
+  const fwd = pointerLocked ? (keys['w']?1:0)-(keys['s']?1:0) : 0;
+  const str = pointerLocked ? (keys['d']?1:0)-(keys['a']?1:0) : 0;
   let dx = Math.cos(yaw)*fwd + Math.cos(yaw+Math.PI/2)*str;
   let dy = Math.sin(yaw)*fwd + Math.sin(yaw+Math.PI/2)*str;
   const len = Math.hypot(dx,dy)||1;
@@ -1404,8 +1404,17 @@ function endGame(win){
 }
 
 // ============================================================ ввод
+// клавиши по физическому коду — работает на любой раскладке (рус/англ)
+function keyName(e){
+  if(e.code==='Space') return ' ';
+  let m = /^Key([A-Z])$/.exec(e.code);
+  if(m) return m[1].toLowerCase();
+  m = /^Digit([0-9])$/.exec(e.code);
+  if(m) return m[1];
+  return e.key.toLowerCase();
+}
 addEventListener('keydown', e=>{
-  const k = e.key.toLowerCase();
+  const k = keyName(e);
   keys[k] = true;
   if(k===' ') e.preventDefault();
   if(!state || state.phase!=='game') return;
@@ -1423,11 +1432,17 @@ addEventListener('keydown', e=>{
     if(p.slots[i]) p.slot = i;
   }
 });
-addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; if(e.key===' ') keys[' '] = false; });
+addEventListener('keyup', e=>{ keys[keyName(e)] = false; });
+
+// при потере фокуса/захвата мыши браузер не шлёт keyup —
+// сбрасываем всё, иначе персонаж «убегает» сам по себе
+function releaseInput(){ keys = {}; mouse.down = false; }
+addEventListener('blur', releaseInput);
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) releaseInput(); });
 
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
-  if(!pointerLocked) mouse.down = false;
+  if(!pointerLocked) releaseInput();
 });
 document.addEventListener('mousemove', e=>{
   if(!pointerLocked) return;
