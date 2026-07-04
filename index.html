@@ -207,6 +207,7 @@ function makeEntity(name,isPlayer){
     ai:{ state:'wander', tx:0, ty:0, think:0, strafe:Math.random()<.5?1:-1,
          strafeT:0, underFire:0, reactT:0 },
     hitFlash:0,
+    emotion:'neutral',      // выражение лица: ключ из EMOTIONS
     mesh:null,
   };
 }
@@ -864,8 +865,20 @@ const GEO = {
   leaf  : new THREE.SphereGeometry(1,10,8),
   rock  : new THREE.DodecahedronGeometry(1,0),
   wall  : new THREE.BoxGeometry(TILE-4,WALL_H,TILE-4),
-  body  : new THREE.CapsuleGeometry(11,22,4,10),
-  head  : new THREE.SphereGeometry(8,10,8),
+  torso : new THREE.CapsuleGeometry(8,14,6,14),
+  leg   : new THREE.BoxGeometry(6.5,20,6.5).translate(0,-10,0),   // пивот — бедро
+  foot  : new THREE.BoxGeometry(8,4,9),
+  arm   : new THREE.BoxGeometry(5,18,5).translate(0,-9,0),        // пивот — плечо
+  hand  : new THREE.SphereGeometry(3.2,10,8),
+  head  : new THREE.SphereGeometry(8.5,20,16),
+  hair  : new THREE.SphereGeometry(9.1,16,10,0,Math.PI*2,0,Math.PI*.55),
+  eye   : new THREE.SphereGeometry(2.1,12,10),
+  pupil : new THREE.SphereGeometry(1.05,8,8),
+  brow  : new THREE.BoxGeometry(1.4,1.3,4.6),
+  nose  : new THREE.SphereGeometry(1.3,8,8),
+  mouth : new THREE.TorusGeometry(2.4,.65,6,16,Math.PI),  // дуга: улыбка/грусть
+  mouthO: new THREE.TorusGeometry(1.5,.8,8,16),           // рот «О» для удивления
+  pack  : new THREE.BoxGeometry(10,14,16),
   gun   : new THREE.BoxGeometry(26,5,5),
   tip   : new THREE.BoxGeometry(7,6,6),
   stick : new THREE.BoxGeometry(24,3,3),
@@ -893,7 +906,12 @@ const MAT = {
   busBody: new THREE.MeshLambertMaterial({ color:0x3aa7e0 }),
   balloon: new THREE.MeshLambertMaterial({ color:0x6e4ae0 }),
   skin  : new THREE.MeshLambertMaterial({ color:0xf5d6b3 }),
+  eyeW  : new THREE.MeshLambertMaterial({ color:0xffffff }),
+  pupil : new THREE.MeshBasicMaterial({ color:0x24262e }),
+  brow  : new THREE.MeshBasicMaterial({ color:0x33241a }),
+  mouth : new THREE.MeshBasicMaterial({ color:0x8a3a3a }),
 };
+const HAIR_COLORS = [0x2c2c34,0x5a3a1e,0xc9a04e,0xd9622e,0x8a5a2e,0x3a2a1a,0x7a4a9e,0xe8d9a0];
 const woodTex = makeWoodTexture();
 const wallColFull = new THREE.Color(0x9a6b35), wallColLow = new THREE.Color(0x503418);
 
@@ -980,27 +998,131 @@ function makeLootMesh(l){
   m.position.set(l.x, 14, l.y);
   return m;
 }
+// ============================================================ эмоции
+// У каждого персонажа есть риг лица (брови, глаза, зрачки, рот) и поле
+// entity.emotion. Чтобы сменить эмоцию, достаточно написать, например:
+//   state.player.emotion = 'happy';      // или setEmotion(бот, 'angry')
+// Лицо плавно перетечёт в новое выражение. Новые эмоции добавляются
+// одной строкой в таблицу EMOTIONS:
+//   browY    — подъём бровей,  browTilt — наклон (+ злость / − грусть)
+//   eye      — раскрытие глаз, pupil    — размер зрачков
+//   mouth    — 'smile' | 'frown' | 'flat' | 'o',  mSize — размер рта
+const EMOTIONS = {
+  neutral:   { browY:0,   browTilt:0,    eye:1,    pupil:1,   mouth:'flat',  mSize:1    },
+  happy:     { browY:1.1, browTilt:-.12, eye:1,    pupil:1,   mouth:'smile', mSize:1.25 },
+  sad:       { browY:.6,  browTilt:-.5,  eye:.8,   pupil:1,   mouth:'frown', mSize:.95  },
+  angry:     { browY:-.9, browTilt:.55,  eye:.62,  pupil:.85, mouth:'frown', mSize:.85  },
+  surprised: { browY:1.9, browTilt:0,    eye:1.35, pupil:.62, mouth:'o',     mSize:1    },
+};
+function setEmotion(e,name){ if(EMOTIONS[name]) e.emotion = name; }
+
+// плавное применение текущей эмоции к ригу лица (+ автоморгание)
+function applyFace(ud, e, s){
+  const em = EMOTIONS[e.emotion] || EMOTIONS.neutral;
+  const f = ud.face, st = f.state, k = .15;
+  st.browY    = lerp(st.browY,    em.browY,    k);
+  st.browTilt = lerp(st.browTilt, em.browTilt, k);
+  st.pupil    = lerp(st.pupil,    em.pupil,    k);
+  const blink = ((s.time + f.blinkOff) % 3.7) < .13;
+  st.eye = lerp(st.eye, blink ? .12 : em.eye, blink ? .6 : k);
+  st.mSize  = lerp(st.mSize, em.mSize, k);
+  st.mArcSY = lerp(st.mArcSY, em.mouth==='o' ? .001 : em.mouth==='flat' ? .28 : 1, k);
+  st.mO     = lerp(st.mO, em.mouth==='o' ? 1 : .001, k);
+
+  f.browL.position.y = 5.2 + st.browY;  f.browR.position.y = 5.2 + st.browY;
+  f.browL.rotation.x =  st.browTilt;    f.browR.rotation.x = -st.browTilt;
+  f.eyeL.scale.y = st.eye;              f.eyeR.scale.y = st.eye;
+  f.pupilL.scale.setScalar(st.pupil);   f.pupilR.scale.setScalar(st.pupil);
+  f.mouthArc.rotation.z = em.mouth==='frown' ? 0 : Math.PI;   // ∩ или ∪
+  f.mouthArc.scale.set(st.mSize, Math.max(.001,st.mArcSY)*st.mSize, st.mSize);
+  f.mouthO.visible = st.mO > .05;
+  f.mouthO.scale.setScalar(Math.max(.001,st.mO));
+}
+
+// детализированный персонаж: туловище, руки, ноги, голова с лицом.
+// Модель смотрит вдоль +X. Все подвижные части лежат в mesh.userData.
 function makeCharacterMesh(e, colorHex){
   const g = new THREE.Group();
-  const bodyMat = ownMat({ color:colorHex, emissive:0x000000 });
-  const body = sh(new THREE.Mesh(GEO.body, bodyMat)); body.position.y = 24;
-  const head = sh(new THREE.Mesh(GEO.head, MAT.skin)); head.position.y = 50;
-  // оружие в «правой руке» (модель смотрит вдоль +X)
-  const gunG = new THREE.Group(); gunG.position.set(14, 34, 10);
+  const bodyMat  = ownMat({ color:colorHex, emissive:0x000000 });
+  const pantsMat = ownMat({ color:new THREE.Color(colorHex).multiplyScalar(.5), emissive:0x000000 });
+  const skinMat  = ownMat({ color:0xf5d6b3, emissive:0x000000 });
+  const hash = [...e.name].reduce((a,c)=>a+c.charCodeAt(0),0);
+
+  // ноги + ботинки
+  const legL = new THREE.Group(); legL.position.set(0,22,-5.5);
+  const legR = new THREE.Group(); legR.position.set(0,22, 5.5);
+  for(const leg of [legL,legR]){
+    leg.add(sh(new THREE.Mesh(GEO.leg, pantsMat)));
+    const foot = new THREE.Mesh(GEO.foot, MAT.gunBody); foot.position.set(1.5,-19,0);
+    leg.add(foot);
+  }
+
+  // торс + рюкзак
+  const torso = sh(new THREE.Mesh(GEO.torso, bodyMat));
+  torso.position.y = 32; torso.scale.set(1,1,1.15);
+  const pack = sh(new THREE.Mesh(GEO.pack, pantsMat)); pack.position.set(-9,34,0);
+
+  // руки + кисти
+  const armL = new THREE.Group(); armL.position.set(0,40,-11.5);
+  const armR = new THREE.Group(); armR.position.set(0,40, 11.5);
+  for(const arm of [armL,armR]){
+    arm.add(sh(new THREE.Mesh(GEO.arm, bodyMat)));
+    const hand = new THREE.Mesh(GEO.hand, skinMat); hand.position.y = -18;
+    arm.add(hand);
+  }
+
+  // голова: волосы, нос, глаза со зрачками, брови, рот
+  const headG = new THREE.Group(); headG.position.y = 50;
+  headG.add(sh(new THREE.Mesh(GEO.head, skinMat)));
+  const hair = sh(new THREE.Mesh(GEO.hair, ownMat({ color:HAIR_COLORS[hash%HAIR_COLORS.length] })));
+  hair.rotation.z = .45; hair.scale.set(1.02,1,1.02);
+  headG.add(hair);
+  const nose = new THREE.Mesh(GEO.nose, skinMat);
+  nose.position.set(8.3,-.6,0); nose.scale.y = .85;
+  headG.add(nose);
+  const mkEye = z=>{
+    const eye = new THREE.Mesh(GEO.eye, MAT.eyeW); eye.position.set(6.9,1.2,z);
+    const pupil = new THREE.Mesh(GEO.pupil, MAT.pupil); pupil.position.set(1.35,0,0);
+    eye.add(pupil); headG.add(eye);
+    return [eye,pupil];
+  };
+  const [eyeL,pupilL] = mkEye(-3.3), [eyeR,pupilR] = mkEye(3.3);
+  const mkBrow = z=>{
+    const b = new THREE.Mesh(GEO.brow, MAT.brow);
+    b.position.set(6.6,5.2,z); headG.add(b); return b;
+  };
+  const browL = mkBrow(-3.3), browR = mkBrow(3.3);
+  const mouthG = new THREE.Group();
+  mouthG.position.set(7.9,-3.4,0); mouthG.rotation.y = Math.PI/2;
+  const mouthArc = new THREE.Mesh(GEO.mouth, MAT.mouth);
+  mouthArc.rotation.z = Math.PI; mouthArc.scale.y = .28;
+  const mouthO = new THREE.Mesh(GEO.mouthO, MAT.mouth); mouthO.visible = false;
+  mouthG.add(mouthArc, mouthO);
+  headG.add(mouthG);
+
+  // оружие в «правой руке»
+  const gunG = new THREE.Group(); gunG.position.set(17, 35, 11.5);
   const gunBody = sh(new THREE.Mesh(GEO.gun, MAT.gunBody)); gunBody.position.x = 8;
   const tipMat = ownMat({ color:0x9aa3ad, emissive:0x9aa3ad, emissiveIntensity:.4 });
   const gunTip = new THREE.Mesh(GEO.tip, tipMat); gunTip.position.x = 22;
   gunG.add(gunBody, gunTip);
   // кирка
-  const pickG = new THREE.Group(); pickG.position.set(14, 34, 10);
+  const pickG = new THREE.Group(); pickG.position.set(17, 35, 11.5);
   const stick = sh(new THREE.Mesh(GEO.stick, MAT.trunk)); stick.position.x = 8;
   const blade = sh(new THREE.Mesh(GEO.blade, MAT.blade)); blade.position.x = 20;
   pickG.add(stick, blade);
   // парашют
   const chute = new THREE.Mesh(GEO.chute, ownMat({ color:colorHex, side:THREE.DoubleSide }));
   chute.position.y = 82;
-  g.add(body, head, gunG, pickG, chute);
-  g.userData = { bodyMat, tipMat, gunG, pickG, chute };
+
+  g.add(legL, legR, torso, pack, armL, armR, headG, gunG, pickG, chute);
+  g.userData = {
+    bodyMat, pantsMat, skinMat, tipMat, gunG, pickG, chute,
+    legL, legR, armL, armR, headG, phase:hash,
+    face:{ browL, browR, eyeL, eyeR, pupilL, pupilR, mouthArc, mouthO,
+           blinkOff:(hash%10)*.37,
+           state:{ browY:0, browTilt:0, eye:1, pupil:1, mArcSY:.28, mSize:1, mO:0 } },
+  };
   return g;
 }
 function makeBusMesh(){
@@ -1026,14 +1148,38 @@ function syncEntity(s,e,colorHex){
   m.position.set(e.x, alt+bob, e.y);
   m.rotation.y = -e.aim;
   ud.chute.visible = e.air>0;
+
+  // анимация: ходьба, полёт на парашюте, правая рука с оружием
+  const sw = (e.moving && e.air<=0) ? Math.sin(s.time*10 + ud.phase)*.6 : 0;
+  if(e.air>0){
+    ud.legL.rotation.z = .3;  ud.legR.rotation.z = -.3;
+    ud.armL.rotation.z = 2.7; ud.armR.rotation.z = 2.7;   // руки к стропам
+  } else {
+    ud.legL.rotation.z = sw;  ud.legR.rotation.z = -sw;
+    ud.armL.rotation.z = -sw*.7 + Math.sin(s.time*2 + ud.phase)*.05;
+    ud.armR.rotation.z = 1.25;
+  }
+
   const gun = curGun(e), melee = WEAPONS[gun.type].melee;
   ud.gunG.visible = !melee;
   ud.pickG.visible = melee;
   if(!melee){
     const c = RARITY[gun.rarity].c;
     ud.tipMat.color.set(c); ud.tipMat.emissive.set(c);
+    ud.pickG.rotation.z = 0;
+  } else {
+    // замах киркой при ударе
+    const swing = e.fireCd>0 ? Math.sin(clamp(e.fireCd*WEAPONS.pickaxe.rof,0,1)*Math.PI) : 0;
+    ud.pickG.rotation.z = swing*1.1;
+    if(e.air<=0) ud.armR.rotation.z = 1.25 + swing*.9;
   }
-  ud.bodyMat.emissive.setHex(e.hitFlash>0 ? 0x888888 : 0x000000);
+
+  applyFace(ud, e, s);
+
+  const flash = e.hitFlash>0 ? 0x883333 : 0x000000;
+  ud.bodyMat.emissive.setHex(flash);
+  ud.pantsMat.emissive.setHex(flash);
+  ud.skinMat.emissive.setHex(flash);
 }
 
 function sync3D(){
