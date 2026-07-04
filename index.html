@@ -865,20 +865,33 @@ const GEO = {
   leaf  : new THREE.SphereGeometry(1,10,8),
   rock  : new THREE.DodecahedronGeometry(1,0),
   wall  : new THREE.BoxGeometry(TILE-4,WALL_H,TILE-4),
-  torso : new THREE.CapsuleGeometry(8,14,6,14),
-  leg   : new THREE.BoxGeometry(6.5,20,6.5).translate(0,-10,0),   // пивот — бедро
-  foot  : new THREE.BoxGeometry(8,4,9),
-  arm   : new THREE.BoxGeometry(5,18,5).translate(0,-9,0),        // пивот — плечо
-  hand  : new THREE.SphereGeometry(3.2,10,8),
-  head  : new THREE.SphereGeometry(8.5,20,16),
-  hair  : new THREE.SphereGeometry(9.1,16,10,0,Math.PI*2,0,Math.PI*.55),
-  eye   : new THREE.SphereGeometry(2.1,12,10),
-  pupil : new THREE.SphereGeometry(1.05,8,8),
-  brow  : new THREE.BoxGeometry(1.4,1.3,4.6),
-  nose  : new THREE.SphereGeometry(1.3,8,8),
-  mouth : new THREE.TorusGeometry(2.4,.65,6,16,Math.PI),  // дуга: улыбка/грусть
-  mouthO: new THREE.TorusGeometry(1.5,.8,8,16),           // рот «О» для удивления
-  pack  : new THREE.BoxGeometry(10,14,16),
+  // — персонаж (геометрии суставов сдвинуты так, что пивот в нуле) —
+  pelvis  : new THREE.CylinderGeometry(6.2,5.4,6.5,14),
+  jacket  : new THREE.CylinderGeometry(8,6,13,16),
+  belt    : new THREE.CylinderGeometry(6.6,6.6,2.4,14),
+  zipper  : new THREE.BoxGeometry(1,12,1.4),
+  collar  : new THREE.CylinderGeometry(4.6,5.4,3,12),
+  neck    : new THREE.CylinderGeometry(2.7,3.1,5,10),
+  shoulder: new THREE.SphereGeometry(3.9,12,10),
+  upperArm: new THREE.CapsuleGeometry(2.9,4.5,4,10).translate(0,-5,0),
+  forearm : new THREE.CapsuleGeometry(2.5,4,4,10).translate(0,-4.5,0),
+  glove   : new THREE.SphereGeometry(3,10,8),
+  thumb   : new THREE.SphereGeometry(1.2,7,6),
+  thigh   : new THREE.CapsuleGeometry(3.4,6,4,10).translate(0,-6,0),
+  shin    : new THREE.CapsuleGeometry(2.8,5,4,10).translate(0,-5,0),
+  boot    : new THREE.BoxGeometry(7.5,4.5,5.8),
+  sole    : new THREE.BoxGeometry(8.6,1.4,6.4),
+  head    : new THREE.SphereGeometry(7.2,22,18),
+  hair    : new THREE.SphereGeometry(7.8,18,12,0,Math.PI*2,0,Math.PI*.6),
+  capTop  : new THREE.SphereGeometry(7.6,16,10,0,Math.PI*2,0,Math.PI*.5),
+  capBrim : new THREE.BoxGeometry(5.5,.9,7.5),
+  eye     : new THREE.SphereGeometry(1.8,12,10),
+  pupil   : new THREE.SphereGeometry(.95,8,8),
+  brow    : new THREE.BoxGeometry(1.2,1.1,4),
+  nose    : new THREE.SphereGeometry(1.1,8,8),
+  mouth   : new THREE.TorusGeometry(2.3,.6,6,16,Math.PI), // дуга: улыбка/грусть
+  mouthO  : new THREE.TorusGeometry(1.5,.75,8,16),        // рот «О» для удивления
+  pack    : new THREE.BoxGeometry(8,12,13),
   gun   : new THREE.BoxGeometry(26,5,5),
   tip   : new THREE.BoxGeometry(7,6,6),
   stick : new THREE.BoxGeometry(24,3,3),
@@ -1029,7 +1042,7 @@ function applyFace(ud, e, s){
   st.mArcSY = lerp(st.mArcSY, em.mouth==='o' ? .001 : em.mouth==='flat' ? .28 : 1, k);
   st.mO     = lerp(st.mO, em.mouth==='o' ? 1 : .001, k);
 
-  f.browL.position.y = 5.2 + st.browY;  f.browR.position.y = 5.2 + st.browY;
+  f.browL.position.y = f.browBase + st.browY;  f.browR.position.y = f.browBase + st.browY;
   f.browL.rotation.x =  st.browTilt;    f.browR.rotation.x = -st.browTilt;
   f.eyeL.scale.y = st.eye;              f.eyeR.scale.y = st.eye;
   f.pupilL.scale.setScalar(st.pupil);   f.pupilR.scale.setScalar(st.pupil);
@@ -1039,88 +1052,121 @@ function applyFace(ud, e, s){
   f.mouthO.scale.setScalar(Math.max(.001,st.mO));
 }
 
-// детализированный персонаж: туловище, руки, ноги, голова с лицом.
+// детализированный персонаж в стиле battle royale: куртка с молнией и
+// воротником, ремень, рюкзак, руки с локтями и перчатками, ноги с коленями
+// и ботинками, шея, голова с лицом и причёской/кепкой.
 // Модель смотрит вдоль +X. Все подвижные части лежат в mesh.userData.
 function makeCharacterMesh(e, colorHex){
   const g = new THREE.Group();
-  const bodyMat  = ownMat({ color:colorHex, emissive:0x000000 });
-  const pantsMat = ownMat({ color:new THREE.Color(colorHex).multiplyScalar(.5), emissive:0x000000 });
+  const bodyMat  = ownMat({ color:colorHex, emissive:0x000000 });   // куртка
+  const pantsMat = ownMat({ color:new THREE.Color(colorHex).multiplyScalar(.45), emissive:0x000000 });
   const skinMat  = ownMat({ color:0xf5d6b3, emissive:0x000000 });
+  const darkMat  = MAT.gunBody;                                     // ботинки, перчатки
   const hash = [...e.name].reduce((a,c)=>a+c.charCodeAt(0),0);
 
-  // ноги + ботинки
-  const legL = new THREE.Group(); legL.position.set(0,22,-5.5);
-  const legR = new THREE.Group(); legR.position.set(0,22, 5.5);
-  for(const leg of [legL,legR]){
-    leg.add(sh(new THREE.Mesh(GEO.leg, pantsMat)));
-    const foot = new THREE.Mesh(GEO.foot, MAT.gunBody); foot.position.set(1.5,-19,0);
-    leg.add(foot);
-  }
+  // — ноги: бедро → колено → голень → ботинок с подошвой —
+  const mkLeg = zz=>{
+    const hip = new THREE.Group(); hip.position.set(0,26,zz);
+    hip.add(sh(new THREE.Mesh(GEO.thigh, pantsMat)));
+    const knee = new THREE.Group(); knee.position.set(0,-12,0);
+    knee.add(sh(new THREE.Mesh(GEO.shin, pantsMat)));
+    const boot = new THREE.Mesh(GEO.boot, darkMat); boot.position.set(1.5,-11.2,0);
+    const sole = new THREE.Mesh(GEO.sole, MAT.pupil); sole.position.set(1.8,-13.6,0);
+    knee.add(boot, sole);
+    hip.add(knee);
+    g.add(hip);
+    return [hip, knee];
+  };
+  const [legL,kneeL] = mkLeg(-3.8), [legR,kneeR] = mkLeg(3.8);
 
-  // торс + рюкзак
-  const torso = sh(new THREE.Mesh(GEO.torso, bodyMat));
-  torso.position.y = 32; torso.scale.set(1,1,1.15);
-  const pack = sh(new THREE.Mesh(GEO.pack, pantsMat)); pack.position.set(-9,34,0);
+  // — корпус: таз, ремень, куртка с молнией и воротником, рюкзак —
+  const pelvis = sh(new THREE.Mesh(GEO.pelvis, pantsMat)); pelvis.position.y = 28;
+  const belt = new THREE.Mesh(GEO.belt, MAT.pupil); belt.position.y = 31.8;
+  const jacket = sh(new THREE.Mesh(GEO.jacket, bodyMat)); jacket.position.y = 38.5; jacket.scale.z = 1.12;
+  const zipper = new THREE.Mesh(GEO.zipper, MAT.blade); zipper.position.set(7,38.5,0);
+  const collar = new THREE.Mesh(GEO.collar, pantsMat); collar.position.y = 45.4;
+  const pack = sh(new THREE.Mesh(GEO.pack, pantsMat)); pack.position.set(-8.5,38,0);
+  g.add(pelvis, belt, jacket, zipper, collar, pack);
 
-  // руки + кисти
-  const armL = new THREE.Group(); armL.position.set(0,40,-11.5);
-  const armR = new THREE.Group(); armR.position.set(0,40, 11.5);
-  for(const arm of [armL,armR]){
-    arm.add(sh(new THREE.Mesh(GEO.arm, bodyMat)));
-    const hand = new THREE.Mesh(GEO.hand, skinMat); hand.position.y = -18;
-    arm.add(hand);
-  }
+  // — руки: плечо с накладкой → локоть → предплечье → перчатка —
+  const mkArm = zz=>{
+    const shoG = new THREE.Group(); shoG.position.set(0,44,zz);
+    shoG.add(new THREE.Mesh(GEO.shoulder, bodyMat));
+    shoG.add(sh(new THREE.Mesh(GEO.upperArm, bodyMat)));
+    const elbow = new THREE.Group(); elbow.position.set(0,-10,0);
+    elbow.add(sh(new THREE.Mesh(GEO.forearm, bodyMat)));
+    const glove = new THREE.Mesh(GEO.glove, darkMat); glove.position.y = -9;
+    const thumb = new THREE.Mesh(GEO.thumb, darkMat); thumb.position.set(1.6,-8.2, zz>0?-2.2:2.2);
+    elbow.add(glove, thumb);
+    shoG.add(elbow);
+    shoG.rotation.x = zz>0 ? -.12 : .12;   // чуть в стороны от корпуса
+    g.add(shoG);
+    return [shoG, elbow];
+  };
+  const [armL,elbowL] = mkArm(-9.2), [armR,elbowR] = mkArm(9.2);
 
-  // голова: волосы, нос, глаза со зрачками, брови, рот
-  const headG = new THREE.Group(); headG.position.y = 50;
+  // — голова: шея, лицо, причёска или кепка —
+  const neck = new THREE.Mesh(GEO.neck, skinMat); neck.position.y = 46.5;
+  const headG = new THREE.Group(); headG.position.y = 53.5; headG.scale.y = 1.07;
   headG.add(sh(new THREE.Mesh(GEO.head, skinMat)));
-  const hair = sh(new THREE.Mesh(GEO.hair, ownMat({ color:HAIR_COLORS[hash%HAIR_COLORS.length] })));
-  hair.rotation.z = .45; hair.scale.set(1.02,1,1.02);
-  headG.add(hair);
+  if(hash%2===0){
+    const hair = sh(new THREE.Mesh(GEO.hair, ownMat({ color:HAIR_COLORS[hash%HAIR_COLORS.length] })));
+    hair.rotation.z = .4; hair.scale.set(1.03,1,1.03);
+    headG.add(hair);
+  } else {
+    // шапка-бини с помпоном — не закрывает брови
+    const capMat = ownMat({ color:HAIR_COLORS[(hash>>1)%HAIR_COLORS.length] });
+    const cap = sh(new THREE.Mesh(GEO.capTop, capMat));
+    cap.position.y = 1.8; cap.scale.set(1.04,.95,1.04);
+    const pom = new THREE.Mesh(GEO.thumb, MAT.eyeW);
+    pom.position.y = 8.6; pom.scale.setScalar(1.5);
+    headG.add(cap, pom);
+  }
   const nose = new THREE.Mesh(GEO.nose, skinMat);
-  nose.position.set(8.3,-.6,0); nose.scale.y = .85;
+  nose.position.set(6.9,-.9,0); nose.scale.y = .85;
   headG.add(nose);
   const mkEye = z=>{
-    const eye = new THREE.Mesh(GEO.eye, MAT.eyeW); eye.position.set(6.9,1.2,z);
-    const pupil = new THREE.Mesh(GEO.pupil, MAT.pupil); pupil.position.set(1.35,0,0);
+    const eye = new THREE.Mesh(GEO.eye, MAT.eyeW); eye.position.set(5.8,1,z);
+    const pupil = new THREE.Mesh(GEO.pupil, MAT.pupil); pupil.position.set(1.15,0,0);
     eye.add(pupil); headG.add(eye);
     return [eye,pupil];
   };
-  const [eyeL,pupilL] = mkEye(-3.3), [eyeR,pupilR] = mkEye(3.3);
+  const [eyeL,pupilL] = mkEye(-2.9), [eyeR,pupilR] = mkEye(2.9);
   const mkBrow = z=>{
     const b = new THREE.Mesh(GEO.brow, MAT.brow);
-    b.position.set(6.6,5.2,z); headG.add(b); return b;
+    b.position.set(6.3,4.4,z); headG.add(b); return b;
   };
-  const browL = mkBrow(-3.3), browR = mkBrow(3.3);
+  const browL = mkBrow(-2.9), browR = mkBrow(2.9);
   const mouthG = new THREE.Group();
-  mouthG.position.set(7.9,-3.4,0); mouthG.rotation.y = Math.PI/2;
+  mouthG.position.set(6.6,-2.9,0); mouthG.rotation.y = Math.PI/2;
   const mouthArc = new THREE.Mesh(GEO.mouth, MAT.mouth);
   mouthArc.rotation.z = Math.PI; mouthArc.scale.y = .28;
   const mouthO = new THREE.Mesh(GEO.mouthO, MAT.mouth); mouthO.visible = false;
   mouthG.add(mouthArc, mouthO);
   headG.add(mouthG);
+  g.add(neck, headG);
 
-  // оружие в «правой руке»
-  const gunG = new THREE.Group(); gunG.position.set(17, 35, 11.5);
+  // — оружие в «правой руке» —
+  const gunG = new THREE.Group(); gunG.position.set(18, 38, 9.2);
   const gunBody = sh(new THREE.Mesh(GEO.gun, MAT.gunBody)); gunBody.position.x = 8;
   const tipMat = ownMat({ color:0x9aa3ad, emissive:0x9aa3ad, emissiveIntensity:.4 });
   const gunTip = new THREE.Mesh(GEO.tip, tipMat); gunTip.position.x = 22;
   gunG.add(gunBody, gunTip);
   // кирка
-  const pickG = new THREE.Group(); pickG.position.set(17, 35, 11.5);
+  const pickG = new THREE.Group(); pickG.position.set(18, 38, 9.2);
   const stick = sh(new THREE.Mesh(GEO.stick, MAT.trunk)); stick.position.x = 8;
   const blade = sh(new THREE.Mesh(GEO.blade, MAT.blade)); blade.position.x = 20;
   pickG.add(stick, blade);
   // парашют
   const chute = new THREE.Mesh(GEO.chute, ownMat({ color:colorHex, side:THREE.DoubleSide }));
   chute.position.y = 82;
+  g.add(gunG, pickG, chute);
 
-  g.add(legL, legR, torso, pack, armL, armR, headG, gunG, pickG, chute);
   g.userData = {
     bodyMat, pantsMat, skinMat, tipMat, gunG, pickG, chute,
-    legL, legR, armL, armR, headG, phase:hash,
+    legL, legR, kneeL, kneeR, armL, armR, elbowL, elbowR, headG, phase:hash,
     face:{ browL, browR, eyeL, eyeR, pupilL, pupilR, mouthArc, mouthO,
-           blinkOff:(hash%10)*.37,
+           browBase:4.4, blinkOff:(hash%10)*.37,
            state:{ browY:0, browTilt:0, eye:1, pupil:1, mArcSY:.28, mSize:1, mO:0 } },
   };
   return g;
@@ -1149,15 +1195,21 @@ function syncEntity(s,e,colorHex){
   m.rotation.y = -e.aim;
   ud.chute.visible = e.air>0;
 
-  // анимация: ходьба, полёт на парашюте, правая рука с оружием
-  const sw = (e.moving && e.air<=0) ? Math.sin(s.time*10 + ud.phase)*.6 : 0;
+  // анимация: ходьба (с коленями и локтями), полёт на парашюте, рука с оружием
+  const sw = (e.moving && e.air<=0) ? Math.sin(s.time*10 + ud.phase)*.55 : 0;
   if(e.air>0){
-    ud.legL.rotation.z = .3;  ud.legR.rotation.z = -.3;
-    ud.armL.rotation.z = 2.7; ud.armR.rotation.z = 2.7;   // руки к стропам
+    ud.legL.rotation.z = .35;  ud.legR.rotation.z = -.2;
+    ud.kneeL.rotation.z = -.5; ud.kneeR.rotation.z = -.35;
+    ud.armL.rotation.z = 2.6;  ud.armR.rotation.z = 2.6;   // руки к стропам
+    ud.elbowL.rotation.z = .3; ud.elbowR.rotation.z = .3;
   } else {
-    ud.legL.rotation.z = sw;  ud.legR.rotation.z = -sw;
+    ud.legL.rotation.z = sw;   ud.legR.rotation.z = -sw;
+    ud.kneeL.rotation.z = -.06 - Math.max(0,-sw)*1.15;
+    ud.kneeR.rotation.z = -.06 - Math.max(0, sw)*1.15;
     ud.armL.rotation.z = -sw*.7 + Math.sin(s.time*2 + ud.phase)*.05;
-    ud.armR.rotation.z = 1.25;
+    ud.elbowL.rotation.z = .25 + Math.abs(sw)*.4;
+    ud.armR.rotation.z = 1.15;
+    ud.elbowR.rotation.z = .35;
   }
 
   const gun = curGun(e), melee = WEAPONS[gun.type].melee;
@@ -1171,7 +1223,7 @@ function syncEntity(s,e,colorHex){
     // замах киркой при ударе
     const swing = e.fireCd>0 ? Math.sin(clamp(e.fireCd*WEAPONS.pickaxe.rof,0,1)*Math.PI) : 0;
     ud.pickG.rotation.z = swing*1.1;
-    if(e.air<=0) ud.armR.rotation.z = 1.25 + swing*.9;
+    if(e.air<=0) ud.armR.rotation.z = 1.15 + swing*.9;
   }
 
   applyFace(ud, e, s);
