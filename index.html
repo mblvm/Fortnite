@@ -2,14 +2,17 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <link rel="icon" href="data:,">
 <title>Королевская Битва 3D</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  html,body { width:100%; height:100%; overflow:hidden; background:#1a1033; }
-  body { font-family:'Arial Black','Arial',sans-serif; }
-  #game { display:block; width:100vw; height:100vh; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#1a1033;
+              overscroll-behavior:none; }
+  body { font-family:'Arial Black','Arial',sans-serif;
+         -webkit-user-select:none; user-select:none;
+         -webkit-tap-highlight-color:transparent; touch-action:none; }
+  #game { display:block; width:100vw; height:100vh; touch-action:none; }
   #hud { position:fixed; inset:0; width:100vw; height:100vh; pointer-events:none; z-index:5; }
   .overlay {
     position:fixed; inset:0; display:flex; flex-direction:column;
@@ -47,6 +50,13 @@
     -webkit-background-clip:text; background-clip:text; color:transparent;
   }
   #endStats { margin-top:14px; font-family:Arial,sans-serif; font-size:19px; color:#cfc6ff; line-height:1.8; }
+  /* компактное меню для телефонов */
+  @media (max-width:760px), (max-height:520px){
+    .controls { font-size:12px; padding:10px 14px; margin-top:16px; line-height:1.65; max-width:94vw; }
+    .btn { margin-top:18px; padding:13px 44px; font-size:22px; }
+    h1 { font-size:min(11vw,54px); }
+    h2 { font-size:min(4.5vw,20px); }
+  }
 </style>
 </head>
 <body>
@@ -57,7 +67,7 @@
   <h1>КОРОЛЕВСКАЯ БИТВА 3D</h1>
   <h2>battle royale в стиле фортнайта — теперь в 3D</h2>
   <button id="playBtn" class="btn">ИГРАТЬ</button>
-  <div class="controls">
+  <div id="controlsHelp" class="controls">
     <b>Мышь</b> — камера и прицел &nbsp;·&nbsp; <b>WASD</b> — движение &nbsp;·&nbsp; <b>ЛКМ</b> — стрелять / бить киркой<br>
     <b>ПКМ</b> — построить стену перед собой (10 материалов) &nbsp;·&nbsp; <b>E</b> — подобрать / открыть сундук<br>
     <b>R</b> — перезарядка &nbsp;·&nbsp; <b>1–5</b> — слоты &nbsp;·&nbsp; <b>Пробел</b> — прыгнуть с автобуса &nbsp;·&nbsp; <b>M</b> — звук<br>
@@ -384,6 +394,18 @@ let shake = 0;
 let yaw = 0, pitch = 0.42;            // камера / прицел игрока
 let pointerLocked = false;
 
+// сенсорный режим (телефон/планшет): виртуальный джойстик + кнопки на экране
+const IS_TOUCH = ('ontouchstart' in window) ||
+  (window.matchMedia && matchMedia('(pointer: coarse)').matches);
+const touch = {
+  stick:{ active:false, id:-1, ox:0, oy:0, dx:0, dy:0 },  // джойстик движения
+  look :{ id:-1, lx:0, ly:0 },                            // палец камеры
+  fireId:-1,                                              // палец на кнопке огня
+  danceOpen:false,                                        // раскрыто ли меню танцев
+};
+// «ввод активен»: на ПК — только при захваченной мыши, на сенсоре — всегда
+const inputActive = ()=> pointerLocked || IS_TOUCH;
+
 function newState(){
   return {
     phase:'menu',            // menu | game | end
@@ -477,7 +499,7 @@ function startGame(){
   state.alive = 1 + state.bots.length;
   yaw = state.bus.ang || 0; pitch = 0.42;
   sfx.jump();
-  canvas.requestPointerLock && canvas.requestPointerLock();
+  if(!IS_TOUCH) canvas.requestPointerLock && canvas.requestPointerLock();
 }
 
 // ============================================================ стены / коллизии
@@ -770,7 +792,7 @@ function landEntity(s,e){
   let tries = 0;
   while(collides(s,e.x,e.y,e.r) && tries++<40){ e.x = clamp(e.x+rand(-60,60),e.r,WORLD-e.r); e.y = clamp(e.y+rand(-60,60),e.r,WORLD-e.r); }
   burst(s,e.x,e.y,'#dfe8ff',10,140);
-  if(!s.zone.active && e.isPlayer){ s.zone.active = true; addFeed(s,'🎵 клавиши 6–9 — танцы!','#ffe95c'); }
+  if(!s.zone.active && e.isPlayer){ s.zone.active = true; addFeed(s, IS_TOUCH?'🎵 кнопка слева — танцы!':'🎵 клавиши 6–9 — танцы!','#ffe95c'); }
 }
 
 function updatePlayer(s,dt){
@@ -779,24 +801,26 @@ function updatePlayer(s,dt){
   p.aim = yaw;                        // прицел = направление камеры
   if(p.onBus) return;                 // прыжок обрабатывается в keydown
 
-  // движение относительно камеры (только при захваченной мыши)
-  const fwd = pointerLocked ? (keys['w']?1:0)-(keys['s']?1:0) : 0;
-  const str = pointerLocked ? (keys['d']?1:0)-(keys['a']?1:0) : 0;
+  // движение относительно камеры: клавиши (при захваченной мыши) или джойстик
+  let fwd = inputActive() ? (keys['w']?1:0)-(keys['s']?1:0) : 0;
+  let str = inputActive() ? (keys['d']?1:0)-(keys['a']?1:0) : 0;
+  if(touch.stick.active){ str += touch.stick.dx; fwd -= touch.stick.dy; }
   if(p.emote && (fwd || str || mouse.down)) stopEmote(p);   // движение/выстрел прерывают танец
   let dx = Math.cos(yaw)*fwd + Math.cos(yaw+Math.PI/2)*str;
   let dy = Math.sin(yaw)*fwd + Math.sin(yaw+Math.PI/2)*str;
   const len = Math.hypot(dx,dy)||1;
+  const mag = Math.min(1,Math.hypot(dx,dy));   // аналоговая скорость с джойстика
 
   if(p.air>0){                        // планирование
     p.air -= dt;
-    const spd = 290;
+    const spd = 290*mag;
     p.x = clamp(p.x + dx/len*spd*dt, p.r, WORLD-p.r);
     p.y = clamp(p.y + dy/len*spd*dt, p.r, WORLD-p.r);
     if(p.air<=0) landEntity(s,p);
     return;
   }
 
-  const spd = 240;
+  const spd = 240*mag;
   moveEntity(s,p,dx/len*spd*dt,dy/len*spd*dt);
   p.moving = (fwd!==0 || str!==0);
 
@@ -1008,7 +1032,7 @@ const camera = new THREE.PerspectiveCamera(70, 1, 1, 6000);
 function resize(){
   W = innerWidth; H = innerHeight;
   renderer.setSize(W,H,false);
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH?1.5:2));  // телефонам полегче
   camera.aspect = W/H; camera.updateProjectionMatrix();
   hud.width = W; hud.height = H;
 }
@@ -1694,10 +1718,11 @@ function drawHUD(s){
 
   if(p.onBus){
     hctx.textAlign = 'center';
-    hctx.font = 'bold italic 34px Arial';
+    hctx.font = 'bold italic '+(IS_TOUCH?26:34)+'px Arial';
     const blink = Math.sin(s.time*5)>0;
-    hctx.fillStyle = 'rgba(0,0,0,.55)'; hctx.fillText('ПРОБЕЛ — ПРЫГНУТЬ!',W/2+2,H*.2+2);
-    hctx.fillStyle = blink?'#ffe95c':'#fff'; hctx.fillText('ПРОБЕЛ — ПРЫГНУТЬ!',W/2,H*.2);
+    const jt = IS_TOUCH ? 'КОСНИСЬ ЭКРАНА — ПРЫГНУТЬ!' : 'ПРОБЕЛ — ПРЫГНУТЬ!';
+    hctx.fillStyle = 'rgba(0,0,0,.55)'; hctx.fillText(jt,W/2+2,H*.2+2);
+    hctx.fillStyle = blink?'#ffe95c':'#fff'; hctx.fillText(jt,W/2,H*.2);
   }
 
   // подсказка «E — подобрать»
@@ -1706,10 +1731,11 @@ function drawHUD(s){
     for(const c of s.chests) if(!c.open && dist(p.x,p.y,c.x,c.y)<85){ near = 'сундук'; break; }
     if(!near) for(const l of s.loot) if(dist(p.x,p.y,l.x,l.y)<70){ near = 'лут'; break; }
     if(near){
+      const pkt = (IS_TOUCH?'✋ — ':'E — ')+(near==='сундук'?'открыть сундук':'подобрать');
       hctx.textAlign = 'center';
       hctx.font = 'bold 18px Arial';
-      hctx.fillStyle = 'rgba(0,0,0,.6)'; hctx.fillText('E — '+(near==='сундук'?'открыть сундук':'подобрать'), W/2+1, H*.62+1);
-      hctx.fillStyle = '#ffe95c'; hctx.fillText('E — '+(near==='сундук'?'открыть сундук':'подобрать'), W/2, H*.62);
+      hctx.fillStyle = 'rgba(0,0,0,.6)'; hctx.fillText(pkt, W/2+1, H*.62+1);
+      hctx.fillStyle = '#ffe95c'; hctx.fillText(pkt, W/2, H*.62);
     }
   }
 
@@ -1735,8 +1761,8 @@ function drawHUD(s){
         hctx.fillStyle = 'rgba(0,0,0,.6)'; hctx.fillText('ударов до слома: '+o.hp, pt.x+1, pt.y-14);
         hctx.fillStyle = '#fff'; hctx.fillText('ударов до слома: '+o.hp, pt.x, pt.y-15);
       }
-      if(held.melee) mineHint = 'ЛКМ — рубить '+(tgt.tree?'дерево':'камень')+' (+10 материалов за удар)';
-      else { mineHint = 'Возьми кирку (клавиша 1), чтобы рубить '+(tgt.tree?'дерево':'камень'); hintCol = '#ffe95c'; }
+      if(held.melee) mineHint = (IS_TOUCH?'⛏ (кнопка огня)':'ЛКМ')+' — рубить '+(tgt.tree?'дерево':'камень')+' (+10 материалов за удар)';
+      else { mineHint = 'Возьми кирку ('+(IS_TOUCH?'слот 1':'клавиша 1')+'), чтобы рубить '+(tgt.tree?'дерево':'камень'); hintCol = '#ffe95c'; }
     } else if(held.melee){
       // кирка в руках, но удар не достанет — объясняем, почему
       let near = null, nd = 240, nTree = false;
@@ -1759,8 +1785,8 @@ function drawHUD(s){
 
   hctx.textAlign = 'left';
 
-  // --- левый низ: хп/щит ---
-  const bx = 24, by = H-64, bw = Math.min(320,W*.3);
+  // --- хп/щит: на ПК — левый низ, на сенсоре — левый верх (низ занят джойстиком) ---
+  const bx = 24, by = IS_TOUCH ? 56 : H-64, bw = Math.min(320,W*.3);
   hctx.fillStyle = 'rgba(0,0,0,.45)';
   roundRect(bx-10,by-36,bw+20,86,10); hctx.fill();
   // щит
@@ -1778,10 +1804,9 @@ function drawHUD(s){
   hctx.font = 'bold 16px Arial'; hctx.fillStyle = '#d9b26b';
   hctx.fillText('🪵 '+p.mats, bx, by+42);
 
-  // --- правый низ: слоты ---
-  const slotW = 58, gap = 8;
-  const totalW = 5*slotW + 4*gap;
-  const sx0 = W - totalW - 24, sy = H - 84;
+  // --- слоты: на ПК — правый низ, на сенсоре — по центру снизу (углы заняты кнопками) ---
+  const SL = slotLayout();
+  const slotW = SL.slotW, gap = SL.gap, sx0 = SL.sx0, sy = SL.sy;
   for(let i=0;i<5;i++){
     const x = sx0 + i*(slotW+gap);
     const g = p.slots[i];
@@ -1838,8 +1863,8 @@ function drawHUD(s){
     hctx.fillText('ВЫ В ШТОРМЕ! Бегите в зону!', W/2, H*.3);
   }
 
-  // --- правый верх: миникарта ---
-  const M = 168, mx = W-M-18, my = 18, k = M/WORLD;
+  // --- правый верх: миникарта (на телефоне компактнее, чтобы не мешала кнопкам) ---
+  const M = IS_TOUCH ? clamp(Math.round(H*.28),96,168) : 168, mx = W-M-18, my = 18, k = M/WORLD;
   hctx.fillStyle = 'rgba(10,20,10,.6)';
   roundRect(mx-4,my-4,M+8,M+8,8); hctx.fill();
   hctx.fillStyle = 'rgba(103,181,68,.5)'; hctx.fillRect(mx,my,M,M);
@@ -1887,11 +1912,19 @@ function drawHUD(s){
   // подсказка в начале
   if(z.active && s.time < 40 && !p.onBus){
     hctx.font = '13px Arial'; hctx.fillStyle = 'rgba(255,255,255,.75)';
-    hctx.fillText('ПКМ — стена перед собой · E — подобрать · дерево — 3 удара киркой, камень — 4', 24, H-140);
+    if(IS_TOUCH){
+      hctx.textAlign = 'center';
+      hctx.fillText('🧱 — стена · ✋ — подобрать · дерево — 3 удара киркой, камень — 4', W/2, H*.74);
+      hctx.textAlign = 'left';
+    } else
+      hctx.fillText('ПКМ — стена перед собой · E — подобрать · дерево — 3 удара киркой, камень — 4', 24, H-140);
   }
 
-  // мышь не захвачена
-  if(!pointerLocked && !p.dead){
+  // сенсорный интерфейс: джойстик и кнопки
+  if(IS_TOUCH) drawTouchUI(s);
+
+  // мышь не захвачена (только ПК)
+  if(!IS_TOUCH && !pointerLocked && !p.dead){
     hctx.fillStyle = 'rgba(0,0,0,.45)';
     hctx.fillRect(0,0,W,H);
     hctx.textAlign = 'center';
@@ -1900,6 +1933,94 @@ function drawHUD(s){
     hctx.fillText('КЛИКНИ, ЧТОБЫ ИГРАТЬ', W/2, H/2);
     hctx.textAlign = 'left';
   }
+}
+
+// ============================================================ сенсорный интерфейс
+// Раскладка слотов — общая для отрисовки и для попадания пальцем
+function slotLayout(){
+  const slotW = IS_TOUCH ? Math.min(52, (W-20)/5-8) : 58, gap = 8;
+  const totalW = 5*slotW + 4*gap;
+  return {
+    slotW, gap, h:60,
+    sx0: IS_TOUCH ? Math.round(W/2-totalW/2) : W-totalW-24,
+    sy : H-84,
+  };
+}
+// Раскладка сенсорных кнопок; part видимости считается при отрисовке и при касании
+function touchLayout(){
+  const u = clamp(Math.min(W,H)/8, 38, 56);   // базовый радиус от размера экрана
+  return {
+    fire  :{ x:W-u*1.5, y:H-u*2.9, r:u*1.15 },          // огонь / кирка
+    build :{ x:W-u*3.6, y:H-u*1.5, r:u*.8  },           // стена
+    pickup:{ x:W-u*3.6, y:H-u*3.6, r:u*.8  },           // подобрать / сундук
+    reload:{ x:W-u*1.5, y:H-u*4.7, r:u*.62 },           // перезарядка (над огнём)
+    emote :{ x:100,     y:140,     r:u*.55 },           // меню танцев (под полосой хп)
+    mute  :{ x:44,      y:140,     r:22 },              // звук
+    stickHome:{ x:u*2.4, y:H-u*2.4, r:u*1.5 },          // место джойстика в покое
+    stickR: u*1.3,                                      // ход ручки джойстика
+  };
+}
+function touchCircle(b,icon,label,lit,dim){
+  hctx.beginPath(); hctx.arc(b.x,b.y,b.r,0,Math.PI*2);
+  hctx.fillStyle = lit ? 'rgba(255,233,92,.3)' : 'rgba(0,0,0,'+(dim?.18:.38)+')';
+  hctx.fill();
+  hctx.lineWidth = 2.5;
+  hctx.strokeStyle = lit ? '#ffe95c' : 'rgba(255,255,255,'+(dim?.25:.55)+')';
+  hctx.stroke();
+  hctx.textAlign = 'center'; hctx.textBaseline = 'middle';
+  hctx.font = Math.round(b.r*.85)+'px Arial';
+  hctx.globalAlpha = dim ? .5 : 1;
+  hctx.fillStyle = '#fff'; hctx.fillText(icon, b.x, b.y+1);
+  hctx.globalAlpha = 1;
+  if(label){
+    hctx.font = 'bold 11px Arial';
+    hctx.fillStyle = 'rgba(0,0,0,.6)'; hctx.fillText(label, b.x+1, b.y+b.r+13);
+    hctx.fillStyle = '#fff'; hctx.fillText(label, b.x, b.y+b.r+12);
+  }
+  hctx.textBaseline = 'alphabetic';
+}
+const DANCE_BTNS = [ ['biker','🏍'], ['griddy','⚽'], ['floss','🦷'], ['classic','🕺'] ];
+function danceBtnPos(L,i){   // танцы раскрываются рядом в строку
+  return { x:L.emote.x+(i+1)*L.emote.r*2.3, y:L.emote.y, r:L.emote.r*.95 };
+}
+function drawTouchUI(s){
+  const p = s.player;
+  const L = touchLayout();
+
+  // звук — доступен всегда
+  touchCircle(L.mute, muted?'🔇':'🔊');
+
+  if(p.dead || p.onBus) return;
+
+  // джойстик: в покое — призрачный кружок слева снизу, при касании — там, где палец
+  const st = touch.stick;
+  const jx = st.active?st.ox:L.stickHome.x, jy = st.active?st.oy:L.stickHome.y;
+  hctx.beginPath(); hctx.arc(jx,jy,L.stickR,0,Math.PI*2);
+  hctx.fillStyle = st.active?'rgba(255,255,255,.1)':'rgba(255,255,255,.05)'; hctx.fill();
+  hctx.lineWidth = 2; hctx.strokeStyle = 'rgba(255,255,255,'+(st.active?.5:.25)+')'; hctx.stroke();
+  hctx.beginPath();
+  hctx.arc(jx+st.dx*L.stickR, jy+st.dy*L.stickR, L.stickR*.42, 0, Math.PI*2);
+  hctx.fillStyle = st.active?'rgba(255,255,255,.55)':'rgba(255,255,255,.18)'; hctx.fill();
+
+  if(p.air>0) return;   // в полёте кнопки боя не нужны
+
+  const gun = curGun(p), def = WEAPONS[gun.type];
+  touchCircle(L.fire, def.melee?'⛏':'🔫', 'ОГОНЬ', touch.fireId!==-1);
+  touchCircle(L.build, '🧱', p.mats, false, p.mats<10);
+
+  // «подобрать» подсвечивается рядом с лутом/сундуком
+  let near = false;
+  for(const c of s.chests) if(!c.open && dist(p.x,p.y,c.x,c.y)<85){ near = true; break; }
+  if(!near) for(const l of s.loot) if(dist(p.x,p.y,l.x,l.y)<70){ near = true; break; }
+  touchCircle(L.pickup, '✋', '', near, !near);
+
+  if(!def.melee && gun.ammo<def.mag && gun.reloadT<=0) touchCircle(L.reload, '⟳');
+
+  // танцы: кнопка-нота раскрывает четыре танца
+  touchCircle(L.emote, '🎵', '', touch.danceOpen);
+  if(touch.danceOpen)
+    DANCE_BTNS.forEach(([name,icon],i)=>
+      touchCircle(danceBtnPos(L,i), icon, '', p.emote && p.emote.name===name));
 }
 
 // ============================================================ конец игры
@@ -1969,7 +2090,11 @@ addEventListener('keyup', e=>{ keys[keyName(e)] = false; });
 
 // при потере фокуса/захвата мыши браузер не шлёт keyup —
 // сбрасываем всё, иначе персонаж «убегает» сам по себе
-function releaseInput(){ keys = {}; mouse.down = false; }
+function releaseInput(){
+  keys = {}; mouse.down = false;
+  touch.stick.active = false; touch.stick.id = -1; touch.stick.dx = touch.stick.dy = 0;
+  touch.look.id = -1; touch.fireId = -1;
+}
 addEventListener('blur', releaseInput);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) releaseInput(); });
 
@@ -2000,6 +2125,112 @@ canvas.addEventListener('mousedown', e=>{
 });
 addEventListener('mouseup', e=>{ if(e.button===0) mouse.down = false; });
 canvas.addEventListener('contextmenu', e=>e.preventDefault());
+
+// --- сенсорное управление (телефоны/планшеты) ---
+// Левая часть экрана — джойстик движения (появляется под пальцем),
+// правая — поворот камеры свайпом, поверх — экранные кнопки.
+const inCircle = (x,y,b,pad)=> dist(x,y,b.x,b.y) <= b.r+(pad||14);
+function touchStart(e){
+  e.preventDefault();
+  initAudio();                        // жест пользователя — будим звук
+  if(!state || state.phase!=='game') return;
+  const p = state.player;
+  const L = touchLayout();
+  for(const t of e.changedTouches){
+    const x = t.clientX, y = t.clientY;
+
+    if(inCircle(x,y,L.mute)){
+      muted = !muted;
+      if(!muted && p.emote) startMusic(EMOTES[p.emote.name].music, p, 1);
+      continue;
+    }
+    if(p.dead) continue;
+    if(p.onBus){ playerJump(state); continue; }   // тап в автобусе — прыжок
+
+    // кнопки (в полёте не работают — как и на ПК)
+    if(p.air<=0){
+      if(inCircle(x,y,L.fire)){ touch.fireId = t.identifier; mouse.down = true; continue; }
+      if(inCircle(x,y,L.build)){
+        stopEmote(p);
+        tryBuild(state,p, p.x+Math.cos(yaw)*TILE*1.2, p.y+Math.sin(yaw)*TILE*1.2);
+        continue;
+      }
+      if(inCircle(x,y,L.pickup)){ tryPickup(state,p); continue; }
+      if(inCircle(x,y,L.reload)){
+        const g = curGun(p), def = WEAPONS[g.type];
+        // кнопка видна только когда перезарядка возможна — иначе тап уходит камере
+        if(!def.melee && g.reloadT<=0 && g.ammo<def.mag){ g.reloadT = def.reload; continue; }
+      }
+      if(inCircle(x,y,L.emote)){ touch.danceOpen = !touch.danceOpen; continue; }
+      if(touch.danceOpen){
+        let hit = false;
+        DANCE_BTNS.forEach(([name],i)=>{
+          if(inCircle(x,y,danceBtnPos(L,i))){ startEmote(state,p,name); touch.danceOpen = false; hit = true; }
+        });
+        if(hit) continue;
+      }
+      // тап по слоту оружия
+      const SL = slotLayout();
+      if(y>=SL.sy-8 && y<=SL.sy+SL.h+8 && x>=SL.sx0-4){
+        const i = Math.floor((x-SL.sx0)/(SL.slotW+SL.gap));
+        if(i>=0 && i<5 && x<=SL.sx0+i*(SL.slotW+SL.gap)+SL.slotW+4){
+          if(state.player.slots[i]) state.player.slot = i;
+          continue;
+        }
+      }
+    }
+
+    // свободная зона: слева — джойстик, справа — камера
+    if(x < W*.45 && !touch.stick.active){
+      touch.stick.active = true; touch.stick.id = t.identifier;
+      touch.stick.ox = x; touch.stick.oy = y;
+      touch.stick.dx = touch.stick.dy = 0;
+    } else if(touch.look.id===-1){
+      touch.look.id = t.identifier; touch.look.lx = x; touch.look.ly = y;
+    }
+  }
+}
+function touchMove(e){
+  e.preventDefault();
+  if(!state || state.phase!=='game') return;
+  const L = touchLayout();
+  for(const t of e.changedTouches){
+    if(t.identifier===touch.stick.id){
+      let dx = (t.clientX-touch.stick.ox)/L.stickR, dy = (t.clientY-touch.stick.oy)/L.stickR;
+      const len = Math.hypot(dx,dy);
+      if(len>1){ dx/=len; dy/=len; }
+      if(len<.18){ dx = 0; dy = 0; }              // мёртвая зона
+      touch.stick.dx = dx; touch.stick.dy = dy;
+    } else if(t.identifier===touch.look.id){
+      yaw += (t.clientX-touch.look.lx) * 0.006;
+      pitch = clamp(pitch + (t.clientY-touch.look.ly) * 0.005, -.15, 1.25);
+      touch.look.lx = t.clientX; touch.look.ly = t.clientY;
+    }
+  }
+}
+function touchEnd(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===touch.stick.id){
+      touch.stick.active = false; touch.stick.id = -1;
+      touch.stick.dx = touch.stick.dy = 0;
+    }
+    if(t.identifier===touch.look.id) touch.look.id = -1;
+    if(t.identifier===touch.fireId){ touch.fireId = -1; mouse.down = false; }
+  }
+}
+canvas.addEventListener('touchstart', touchStart, {passive:false});
+canvas.addEventListener('touchmove',  touchMove,  {passive:false});
+canvas.addEventListener('touchend',   touchEnd,   {passive:false});
+canvas.addEventListener('touchcancel',touchEnd,   {passive:false});
+
+// на телефоне показываем инструкцию для сенсорного управления
+if(IS_TOUCH) document.getElementById('controlsHelp').innerHTML =
+  '<b>Левая половина экрана</b> — джойстик движения &nbsp;·&nbsp; <b>правая</b> — поворот камеры<br>'+
+  '<b>🔫/⛏</b> — стрелять и рубить (держи) &nbsp;·&nbsp; <b>🧱</b> — стена &nbsp;·&nbsp; <b>✋</b> — подобрать / сундук<br>'+
+  '<b>⟳</b> — перезарядка &nbsp;·&nbsp; <b>🎵</b> — танцы с музыкой &nbsp;·&nbsp; <b>🔊</b> — звук &nbsp;·&nbsp; тап по слоту — смена оружия<br>'+
+  'Коснись экрана, чтобы прыгнуть с автобуса. Дерево — 3 удара киркой, камень — 4.<br>'+
+  'Последний выживший побеждает! &nbsp;📱 Удобнее играть, повернув телефон горизонтально.';
 
 document.getElementById('playBtn').addEventListener('click', ()=>{
   initAudio();
