@@ -61,6 +61,7 @@
     <b>Мышь</b> — камера и прицел &nbsp;·&nbsp; <b>WASD</b> — движение &nbsp;·&nbsp; <b>ЛКМ</b> — стрелять / бить киркой<br>
     <b>ПКМ</b> — построить стену перед собой (10 материалов) &nbsp;·&nbsp; <b>E</b> — подобрать / открыть сундук<br>
     <b>R</b> — перезарядка &nbsp;·&nbsp; <b>1–5</b> — слоты &nbsp;·&nbsp; <b>Пробел</b> — прыгнуть с автобуса &nbsp;·&nbsp; <b>M</b> — звук<br>
+    <b>6</b> — танец «Фонк-байкер» &nbsp;·&nbsp; <b>7</b> — танец «Гридди» — музыкальные эмоции с музыкой!<br>
     <b>Esc</b> — освободить мышь, клик по экрану — вернуться в игру<br>
     Добывай материалы киркой: <b>дерево — 3 удара</b>, <b>камень — 4</b> (полоска прочности видна над целью).<br>
     Последний выживший побеждает!
@@ -128,6 +129,159 @@ const sfx = {
   win    : ()=>{ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,f,.28,'triangle',.16),i*160)); },
   lose   : ()=>{ [400,330,262,196].forEach((f,i)=>setTimeout(()=>beep(f,f,.3,'sawtooth',.1),i*180)); },
 };
+
+// ============================================================ музыкальные эмоции (танцы)
+// Клавиши 6/7 включают танец с музыкой (повторное нажатие — выключает).
+// Боты празднуют убийства случайным танцем. Музыка синтезируется на
+// WebAudio: «biker» — фонк в ре-диез миноре (тяжёлая бочка, 808-бас,
+// ковбелл-рифф), «griddy» — задорный мажорный рифф на 126 BPM.
+const NOTE = m=>440*Math.pow(2,(m-69)/12);
+let noiseBuf = null;
+function getNoise(){
+  if(!noiseBuf){
+    noiseBuf = audio.createBuffer(1, audio.sampleRate*.3, audio.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i] = Math.random()*2-1;
+  }
+  return noiseBuf;
+}
+function mTone(t,midi,dur,type,vol,glideTo){
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = type; o.frequency.setValueAtTime(NOTE(midi),t);
+  if(glideTo!==undefined) o.frequency.exponentialRampToValueAtTime(NOTE(glideTo),t+dur);
+  g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.001,t+dur);
+  o.connect(g); g.connect(audio.destination);
+  o.start(t); o.stop(t+dur);
+}
+function mKick(t,vol){
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(150,t);
+  o.frequency.exponentialRampToValueAtTime(38,t+.18);
+  g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.001,t+.22);
+  o.connect(g); g.connect(audio.destination); o.start(t); o.stop(t+.24);
+}
+function mNoise(t,dur,vol,hp){
+  const src = audio.createBufferSource(); src.buffer = getNoise();
+  const g = audio.createGain();
+  g.gain.setValueAtTime(vol,t); g.gain.exponentialRampToValueAtTime(.001,t+dur);
+  let node = src;
+  if(hp){ const f = audio.createBiquadFilter(); f.type='highpass'; f.frequency.value = hp; src.connect(f); node = f; }
+  node.connect(g); g.connect(audio.destination);
+  src.start(t); src.stop(t+dur);
+}
+
+// мелодии — MIDI-ноты по восьмым (0 — пауза), 4 такта на круг
+const MEL_GRIDDY = [76,0,72,0,76,0,77,0, 74,69,72,0,76,74,0,79, 69,72,0,76,0,0,74,69, 72,0,76,74,0,76,0,72];
+const BASS_GRIDDY = [45,41,48,43];            // A2 F2 C3 G2 — по такту
+const MEL_BIKER  = [63,0,63,66,0,63,61,0, 59,0,58,0,59,61,63,0, 63,0,63,66,0,63,61,0, 61,0,59,58,0,61,59,0];
+const BASS_BIKER = [35,37,39,39];             // B1 C#2 D#2 D#2 — «808»
+const MUSIC_TRACKS = {
+  griddy:{ bpm:126, steps:32, at(st,t,v){
+    const b = st%8;
+    if(b===0||b===4) mKick(t,.5*v);
+    if(b===2||b===6) mNoise(t,.14,.25*v,1800);        // снейр
+    if(st%2===1) mNoise(t,.045,.09*v,6000);           // хэты
+    if(st%2===0) mTone(t,BASS_GRIDDY[(st>>3)%4],.2,'triangle',.22*v);
+    const n = MEL_GRIDDY[st%32];
+    if(n){ mTone(t,n,.22,'square',.07*v); mTone(t,n+12,.22,'sine',.05*v); }
+  }},
+  biker:{ bpm:84, steps:32, at(st,t,v){
+    const b = st%8;
+    if(b===0||b===7) mKick(t,.55*v);
+    if(b===4) mNoise(t,.18,.3*v,1500);                // снейр на 3-ю долю (халф-тайм)
+    mNoise(t,.04,.08*v,7000);                         // хэты каждую восьмую
+    if(b===0){ const bar=(st>>3)%4; mTone(t,BASS_BIKER[bar],1.3,'sine',.3*v,BASS_BIKER[bar]-.5); }
+    const n = MEL_BIKER[st%32];
+    if(n){ mTone(t,n,.16,'square',.08*v); mTone(t,n,.16,'triangle',.09*v); }  // «ковбелл»
+  }},
+};
+
+// секвенсор: планируем ноты с небольшим опережением
+const music = { owner:null, name:null, vol:1, step:0, nextT:0, timer:null };
+function startMusic(name, owner, vol){
+  stopMusic();
+  if(!audio || muted) return;
+  music.name = name; music.owner = owner; music.vol = vol;
+  music.step = 0; music.nextT = audio.currentTime + .06;
+  music.timer = setInterval(tickMusic, 45);
+}
+function tickMusic(){
+  if(!audio || muted || !music.name){ stopMusic(); return; }
+  const tr = MUSIC_TRACKS[music.name], dur = 30/tr.bpm;   // длительность восьмой
+  while(music.nextT < audio.currentTime + .18){
+    tr.at(music.step % tr.steps, music.nextT, music.vol);
+    music.step++; music.nextT += dur;
+  }
+}
+function stopMusic(){
+  if(music.timer) clearInterval(music.timer);
+  music.timer = null; music.name = null; music.owner = null;
+}
+
+const EMOTES = {
+  biker : { title:'Фонк-байкер', music:'biker'  },   // удары кулаками + руки к шлему
+  griddy: { title:'Гридди',      music:'griddy' },   // высокие колени + махи руками
+};
+function startEmote(s,e,name){
+  const em = EMOTES[name];
+  if(!em || e.dead || e.onBus || e.air>0) return;
+  if(e.emote && e.emote.name===name){ stopEmote(e); return; }   // повторно — выключить
+  e.emote = { name, start:s.time };
+  e.emotion = 'happy';
+  if(e.isPlayer) startMusic(em.music, e, 1);
+  else if(!music.name && s.player && !s.player.dead && dist(e.x,e.y,s.player.x,s.player.y)<500)
+    startMusic(em.music, e, .4);                     // танец бота слышно рядом
+}
+function stopEmote(e){
+  if(!e.emote) return;
+  e.emote = null;
+  e.emotion = 'neutral';
+  if(music.owner===e) stopMusic();
+}
+
+// поза танца; bt — время в битах музыки, риг — mesh.userData персонажа
+function dancePose(ud,name,bt){
+  const beat = bt*Math.PI;                 // π за бит
+  if(name==='griddy'){
+    // бег на месте с высокими коленями; каждые 4 бита руки то «поршни», то крест
+    const s = Math.sin(beat);
+    const liftL = Math.max(0,s), liftR = Math.max(0,-s);
+    ud.legL.rotation.z = liftL*1.15 - .05;  ud.kneeL.rotation.z = -.15 - liftL*1.5;
+    ud.legR.rotation.z = liftR*1.15 - .05;  ud.kneeR.rotation.z = -.15 - liftR*1.5;
+    if(Math.floor(bt/4)%2===0){
+      ud.armL.rotation.z = .6 + liftR*.9;   ud.elbowL.rotation.z = 1.25;
+      ud.armR.rotation.z = .6 + liftL*.9;   ud.elbowR.rotation.z = 1.25;
+      ud.armL.rotation.x = .12;             ud.armR.rotation.x = -.12;
+    } else {
+      // предплечья крест-накрест перед грудью
+      ud.armL.rotation.z = 1.25;            ud.armR.rotation.z = 1.25;
+      ud.elbowL.rotation.z = 1.15 + Math.sin(beat*2)*.2;
+      ud.elbowR.rotation.z = 1.15 - Math.sin(beat*2)*.2;
+      ud.armL.rotation.x = .55;             ud.armR.rotation.x = -.55;
+    }
+    ud.headG.rotation.z = Math.sin(beat*2)*.07;
+  } else {
+    // «фонк-байкер»: серия ударов кулаками, потом руки к шлему с покачиванием
+    const s = Math.sin(beat);
+    if(Math.floor(bt/4)%2===0){
+      const l = Math.max(0,s), r = Math.max(0,-s);
+      ud.armL.rotation.z = .9 + l*.75;      ud.elbowL.rotation.z = 1.6 - l*1.45;
+      ud.armR.rotation.z = .9 + r*.75;      ud.elbowR.rotation.z = 1.6 - r*1.45;
+      ud.armL.rotation.x = .2;              ud.armR.rotation.x = -.2;
+      ud.headG.rotation.y = s*.12;
+    } else {
+      ud.armL.rotation.z = 2.35 + Math.sin(beat*2)*.12;
+      ud.armR.rotation.z = 2.35 - Math.sin(beat*2)*.12;
+      ud.elbowL.rotation.z = 1.9;           ud.elbowR.rotation.z = 1.9;
+      ud.armL.rotation.x = .35;             ud.armR.rotation.x = -.35;
+      ud.headG.rotation.y = Math.sin(beat*2)*.3;
+    }
+    // пружинка в коленях в такт
+    const bk = Math.abs(Math.sin(beat));
+    ud.legL.rotation.z = .12 + bk*.1;  ud.kneeL.rotation.z = -.25 - bk*.25;
+    ud.legR.rotation.z = .12 + bk*.1;  ud.kneeR.rotation.z = -.25 - bk*.25;
+  }
+}
 
 // ============================================================ оружие
 const WEAPONS = {
@@ -211,6 +365,7 @@ function makeEntity(name,isPlayer){
          strafeT:0, underFire:0, reactT:0 },
     hitFlash:0,
     emotion:'neutral',      // выражение лица: ключ из EMOTIONS
+    emote:null,             // текущий танец: {name, start} или null
     mesh:null,
   };
 }
@@ -240,6 +395,7 @@ function genWorld(s){
 
 function startGame(){
   clearWorld();
+  stopMusic();
   state = newState();
   state.phase = 'game';
   genWorld(state);
@@ -332,6 +488,7 @@ function hurt(s,victim,dmg,attacker,weaponName){
   } else dmgNum(s,victim.x,victim.y,dmg,'#ffd54d');
   victim.hp -= left;
   victim.hitFlash = .15;
+  stopEmote(victim);      // под огнём не до танцев
   victim.ai.underFire = 2;
   if(attacker) victim.ai.lastAttacker = attacker;
   burst(s,victim.x,victim.y,'#7ce7ff',6,120);
@@ -341,6 +498,7 @@ function hurt(s,victim,dmg,attacker,weaponName){
 }
 function kill(s,victim,attacker){
   victim.dead = true;
+  stopEmote(victim);
   removeMesh(victim);
   s.alive--;
   burst(s,victim.x,victim.y,'#c9b8ff',22,220);
@@ -355,6 +513,9 @@ function kill(s,victim,attacker){
     attacker.kills++;
     addFeed(s, attacker.name+' ⚡ '+victim.name, attacker.isPlayer?'#ffe95c':'#fff');
     if(attacker.isPlayer) sfx.kill();
+    // бот празднует убийство танцем
+    else if(!attacker.dead && Math.random()<.55)
+      startEmote(s, attacker, pick(Object.keys(EMOTES)));
   } else addFeed(s, victim.name+' погиб в шторме', '#c96bff');
   if(victim.isPlayer){
     s.placement = s.alive+1;
@@ -544,7 +705,7 @@ function landEntity(s,e){
   let tries = 0;
   while(collides(s,e.x,e.y,e.r) && tries++<40){ e.x = clamp(e.x+rand(-60,60),e.r,WORLD-e.r); e.y = clamp(e.y+rand(-60,60),e.r,WORLD-e.r); }
   burst(s,e.x,e.y,'#dfe8ff',10,140);
-  if(!s.zone.active && e.isPlayer) s.zone.active = true;
+  if(!s.zone.active && e.isPlayer){ s.zone.active = true; addFeed(s,'🎵 6 и 7 — танцы!','#ffe95c'); }
 }
 
 function updatePlayer(s,dt){
@@ -556,6 +717,7 @@ function updatePlayer(s,dt){
   // движение относительно камеры (только при захваченной мыши)
   const fwd = pointerLocked ? (keys['w']?1:0)-(keys['s']?1:0) : 0;
   const str = pointerLocked ? (keys['d']?1:0)-(keys['a']?1:0) : 0;
+  if(p.emote && (fwd || str || mouse.down)) stopEmote(p);   // движение/выстрел прерывают танец
   let dx = Math.cos(yaw)*fwd + Math.cos(yaw+Math.PI/2)*str;
   let dy = Math.sin(yaw)*fwd + Math.sin(yaw+Math.PI/2)*str;
   const len = Math.hypot(dx,dy)||1;
@@ -604,6 +766,12 @@ function updateBot(s,b,dt){
     b.y = lerp(b.y,b.landY,Math.min(1,t+dt));
     if(b.air<=0) landEntity(s,b);
     return;
+  }
+
+  // танцующий бот стоит на месте, пока его не потревожат
+  if(b.emote){
+    if(s.time - b.emote.start > 4.5 || b.ai.underFire>0) stopEmote(b);
+    else { b.moving = false; return; }
   }
 
   const ai = b.ai;
@@ -1210,9 +1378,18 @@ function syncEntity(s,e,colorHex){
   m.rotation.y = -e.aim;
   ud.chute.visible = e.air>0;
 
-  // анимация: ходьба (с коленями и локтями), полёт на парашюте, рука с оружием
+  // анимация: ходьба (с коленями и локтями), полёт на парашюте, танец, рука с оружием
+  ud.armL.rotation.x = .12; ud.armR.rotation.x = -.12;   // база (танец меняет)
+  ud.headG.rotation.y = ud.headG.rotation.z = 0;
   const sw = (e.moving && e.air<=0) ? Math.sin(s.time*10 + ud.phase)*.55 : 0;
-  if(e.air>0){
+  if(e.emote && e.air<=0){
+    // музыкальная эмоция: поза в такт музыке, персонаж лицом к камере
+    const bpm = MUSIC_TRACKS[EMOTES[e.emote.name].music].bpm;
+    const bt = (s.time - e.emote.start) * bpm/60;         // время в битах
+    dancePose(ud, e.emote.name, bt);
+    m.position.y = alt + Math.abs(Math.sin(bt*Math.PI))*2.5;
+    if(e.isPlayer) m.rotation.y = -(yaw+Math.PI);
+  } else if(e.air>0){
     ud.legL.rotation.z = .35;  ud.legR.rotation.z = -.2;
     ud.kneeL.rotation.z = -.5; ud.kneeR.rotation.z = -.35;
     ud.armL.rotation.z = 2.6;  ud.armR.rotation.z = 2.6;   // руки к стропам
@@ -1228,8 +1405,8 @@ function syncEntity(s,e,colorHex){
   }
 
   const gun = curGun(e), melee = WEAPONS[gun.type].melee;
-  ud.gunG.visible = !melee;
-  ud.pickG.visible = melee;
+  ud.gunG.visible = !melee && !e.emote;   // на танце оружие убрано
+  ud.pickG.visible = melee && !e.emote;
   if(!melee){
     const c = RARITY[gun.rarity].c;
     ud.tipMat.color.set(c); ud.tipMat.emissive.set(c);
@@ -1238,7 +1415,7 @@ function syncEntity(s,e,colorHex){
     // замах киркой при ударе
     const swing = e.fireCd>0 ? Math.sin(clamp(e.fireCd*WEAPONS.pickaxe.rof,0,1)*Math.PI) : 0;
     ud.pickG.rotation.z = swing*1.1;
-    if(e.air<=0) ud.armR.rotation.z = 1.15 + swing*.9;
+    if(e.air<=0 && !e.emote) ud.armR.rotation.z = 1.15 + swing*.9;
   }
 
   applyFace(ud, e, s);
@@ -1437,6 +1614,16 @@ function drawHUD(s){
       hctx.moveTo(W/2+dx*7,H/2+dy*7); hctx.lineTo(W/2+dx*14,H/2+dy*14);
     }
     hctx.stroke();
+  }
+
+  // название танца во время музыкальной эмоции
+  if(p.emote){
+    hctx.textAlign = 'center';
+    hctx.font = 'bold italic 22px Arial';
+    const et = '🎵 '+EMOTES[p.emote.name].title+' 🎵';
+    hctx.fillStyle = 'rgba(0,0,0,.55)'; hctx.fillText(et, W/2+1, H*.82+1);
+    hctx.fillStyle = '#ffe95c'; hctx.fillText(et, W/2, H*.82);
+    hctx.textAlign = 'left';
   }
 
   if(p.onBus){
@@ -1653,6 +1840,7 @@ function drawHUD(s){
 function endGame(win){
   const s = state;
   s.phase = 'end';
+  stopMusic();
   const p = s.player;
   document.exitPointerLock && document.exitPointerLock();
   document.getElementById('end').classList.remove('hidden');
@@ -1688,9 +1876,16 @@ addEventListener('keydown', e=>{
   if(k===' ') e.preventDefault();
   if(!state || state.phase!=='game') return;
   const p = state.player;
-  if(k==='m') muted = !muted;
+  if(k==='m'){
+    muted = !muted;
+    if(!muted && p.emote) startMusic(EMOTES[p.emote.name].music, p, 1);
+  }
   if(k===' ' && p.onBus){ playerJump(state); return; }
   if(p.dead || p.onBus) return;
+  if(!e.repeat){
+    if(k==='6') startEmote(state,p,'biker');
+    if(k==='7') startEmote(state,p,'griddy');
+  }
   if(k==='r'){
     const g = curGun(p), def = WEAPONS[g.type];
     if(!def.melee && g.reloadT<=0 && g.ammo<def.mag) g.reloadT = def.reload;
@@ -1727,8 +1922,10 @@ canvas.addEventListener('mousedown', e=>{
   const p = state.player;
   if(e.button===0) mouse.down = true;
   if(e.button===2){
-    if(!p.dead && !p.onBus && p.air<=0)
+    if(!p.dead && !p.onBus && p.air<=0){
+      stopEmote(p);
       tryBuild(state,p, p.x+Math.cos(yaw)*TILE*1.2, p.y+Math.sin(yaw)*TILE*1.2);
+    }
   }
 });
 addEventListener('mouseup', e=>{ if(e.button===0) mouse.down = false; });
