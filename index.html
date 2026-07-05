@@ -61,7 +61,7 @@
     <b>Мышь</b> — камера и прицел &nbsp;·&nbsp; <b>WASD</b> — движение &nbsp;·&nbsp; <b>ЛКМ</b> — стрелять / бить киркой<br>
     <b>ПКМ</b> — построить стену перед собой (10 материалов) &nbsp;·&nbsp; <b>E</b> — подобрать / открыть сундук<br>
     <b>R</b> — перезарядка &nbsp;·&nbsp; <b>1–5</b> — слоты &nbsp;·&nbsp; <b>Пробел</b> — прыгнуть с автобуса &nbsp;·&nbsp; <b>M</b> — звук<br>
-    <b>6</b> — танец «Фонк-байкер» &nbsp;·&nbsp; <b>7</b> — танец «Гридди» — музыкальные эмоции с музыкой!<br>
+    Танцы с музыкой: <b>6</b> — «Фонк-байкер» &nbsp;·&nbsp; <b>7</b> — «Гридди» &nbsp;·&nbsp; <b>8</b> — «Флосс» &nbsp;·&nbsp; <b>9</b> — «Классика»<br>
     <b>Esc</b> — освободить мышь, клик по экрану — вернуться в игру<br>
     Добывай материалы киркой: <b>дерево — 3 удара</b>, <b>камень — 4</b> (полоска прочности видна над целью).<br>
     Последний выживший побеждает!
@@ -99,7 +99,12 @@ const pick  = arr=>arr[Math.floor(Math.random()*arr.length)];
 
 // ============================================================ звук
 let audio = null, muted = false;
-function initAudio(){ if(!audio) try{ audio = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
+function initAudio(){
+  if(!audio) try{ audio = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+  // браузер мог приостановить контекст (политика автовоспроизведения) —
+  // будим его при каждом жесте пользователя, иначе музыка и звуки молчат
+  if(audio && audio.state==='suspended') audio.resume();
+}
 function beep(f0,f1,dur,type='square',vol=0.12){
   if(!audio || muted) return;
   const t = audio.currentTime;
@@ -175,6 +180,10 @@ const MEL_GRIDDY = [76,0,72,0,76,0,77,0, 74,69,72,0,76,74,0,79, 69,72,0,76,0,0,7
 const BASS_GRIDDY = [45,41,48,43];            // A2 F2 C3 G2 — по такту
 const MEL_BIKER  = [63,0,63,66,0,63,61,0, 59,0,58,0,59,61,63,0, 63,0,63,66,0,63,61,0, 61,0,59,58,0,61,59,0];
 const BASS_BIKER = [35,37,39,39];             // B1 C#2 D#2 D#2 — «808»
+const MEL_FLOSS  = [69,0,69,71,72,0,71,69, 67,0,67,69,71,0,69,67, 69,0,69,71,72,0,74,72, 71,69,67,0,64,0,67,0];
+const BASS_FLOSS = [45,43,41,43];             // A2 G2 F2 G2 — хаус-качели
+const MEL_CLASSIC= [74,0,0,74,76,0,74,0, 71,0,69,0,71,0,0,0, 74,0,0,74,76,0,79,0, 76,0,74,0,71,0,74,0];
+const BASS_CLASSIC=[38,38,36,31];             // D2 D2 C2 G1 — фанк
 const MUSIC_TRACKS = {
   griddy:{ bpm:126, steps:32, at(st,t,v){
     const b = st%8;
@@ -194,6 +203,24 @@ const MUSIC_TRACKS = {
     const n = MEL_BIKER[st%32];
     if(n){ mTone(t,n,.16,'square',.08*v); mTone(t,n,.16,'triangle',.09*v); }  // «ковбелл»
   }},
+  floss:{ bpm:130, steps:32, at(st,t,v){
+    const b = st%8;
+    if(b%2===0) mKick(t,.45*v);                       // бочка «четыре на пол»
+    if(b===2||b===6) mNoise(t,.12,.28*v,2000);        // клэп
+    if(st%2===1) mNoise(t,.05,.11*v,7000);            // офбит-хэты
+    if(b%2===0) mTone(t,BASS_FLOSS[(st>>3)%4],.18,'sawtooth',.16*v);
+    const n = MEL_FLOSS[st%32];
+    if(n){ mTone(t,n,.2,'square',.07*v); mTone(t,n+12,.2,'sine',.05*v); }
+  }},
+  classic:{ bpm:112, steps:32, at(st,t,v){
+    const b = st%8;
+    if(b===0||b===3) mKick(t,.5*v);                   // синкопа-фанк
+    if(b===2||b===6) mNoise(t,.13,.26*v,1800);        // снейр
+    mNoise(t,.04,.07*v,7500);                         // тихие хэты каждую восьмую
+    if(b===0||b===3) mTone(t,BASS_CLASSIC[(st>>3)%4],.28,'triangle',.24*v);
+    const n = MEL_CLASSIC[st%32];
+    if(n){ mTone(t,n,.24,'triangle',.12*v); mTone(t,n,.24,'sine',.07*v); }  // «флейта»
+  }},
 };
 
 // секвенсор: планируем ноты с небольшим опережением
@@ -201,6 +228,7 @@ const music = { owner:null, name:null, vol:1, step:0, nextT:0, timer:null };
 function startMusic(name, owner, vol){
   stopMusic();
   if(!audio || muted) return;
+  if(audio.state==='suspended') audio.resume();
   music.name = name; music.owner = owner; music.vol = vol;
   music.step = 0; music.nextT = audio.currentTime + .06;
   music.timer = setInterval(tickMusic, 45);
@@ -219,12 +247,18 @@ function stopMusic(){
 }
 
 const EMOTES = {
-  biker : { title:'Фонк-байкер', music:'biker'  },   // удары кулаками + руки к шлему
-  griddy: { title:'Гридди',      music:'griddy' },   // высокие колени + махи руками
+  biker  : { title:'Фонк-байкер', music:'biker'   },  // удары кулаками + руки к шлему
+  griddy : { title:'Гридди',      music:'griddy'  },  // высокие колени + махи руками
+  floss  : { title:'Флосс',       music:'floss'   },  // прямые руки маятником, бёдра в противофазе
+  classic: { title:'Классика',    music:'classic' },  // взмахи над головой + шаги с подскоком
 };
 function startEmote(s,e,name){
   const em = EMOTES[name];
-  if(!em || e.dead || e.onBus || e.air>0) return;
+  if(!em || e.dead) return;
+  if(e.onBus || e.air>0){                             // молчаливый отказ выглядит как баг
+    if(e.isPlayer) addFeed(s,'🎵 Танцевать можно только на земле','#ffe95c');
+    return;
+  }
   if(e.emote && e.emote.name===name){ stopEmote(e); return; }   // повторно — выключить
   e.emote = { name, start:s.time };
   e.emotion = 'happy';
@@ -260,6 +294,37 @@ function dancePose(ud,name,bt){
       ud.armL.rotation.x = .55;             ud.armR.rotation.x = -.55;
     }
     ud.headG.rotation.z = Math.sin(beat*2)*.07;
+  } else if(name==='floss'){
+    // «флосс»: прямые руки маятником влево-вправо (одна перед корпусом,
+    // другая за спиной), бёдра качаются в противофазе
+    const s = Math.sin(beat*2);                // полный мах за бит
+    ud.armL.rotation.x = s*.85;   ud.armR.rotation.x = s*.85;
+    ud.armL.rotation.z = .3 - s*.4;  ud.armR.rotation.z = .3 + s*.4;
+    ud.elbowL.rotation.z = .08;   ud.elbowR.rotation.z = .08;
+    ud.legL.rotation.x = -s*.16;  ud.legR.rotation.x = -s*.16;
+    ud.headG.rotation.z = s*.12;
+    const bk = Math.abs(Math.sin(beat*2));
+    ud.legL.rotation.z = .05;  ud.kneeL.rotation.z = -.12 - bk*.22;
+    ud.legR.rotation.z = .05;  ud.kneeR.rotation.z = -.12 - bk*.22;
+  } else if(name==='classic'){
+    // «классика»: поочерёдные взмахи руками над головой, потом «замес»
+    // согнутыми локтями перед грудью; шаги с подскоком
+    const s = Math.sin(beat);
+    if(Math.floor(bt/4)%2===0){
+      const l = Math.max(0,s), r = Math.max(0,-s);
+      ud.armL.rotation.z = 1.5 + l*1.2;  ud.elbowL.rotation.z = .3;
+      ud.armR.rotation.z = 1.5 + r*1.2;  ud.elbowR.rotation.z = .3;
+      ud.armL.rotation.x = .25;          ud.armR.rotation.x = -.25;
+      ud.headG.rotation.z = s*.1;
+    } else {
+      ud.armL.rotation.z = .9;           ud.armR.rotation.z = .9;
+      ud.elbowL.rotation.z = 1.5 + s*.5; ud.elbowR.rotation.z = 1.5 - s*.5;
+      ud.armL.rotation.x = .3 + s*.3;    ud.armR.rotation.x = -.3 + s*.3;
+      ud.headG.rotation.y = s*.25;
+    }
+    const liftL = Math.max(0,s)*.5, liftR = Math.max(0,-s)*.5;
+    ud.legL.rotation.z = liftL*.9 - .05;  ud.kneeL.rotation.z = -.2 - liftL*.8;
+    ud.legR.rotation.z = liftR*.9 - .05;  ud.kneeR.rotation.z = -.2 - liftR*.8;
   } else {
     // «фонк-байкер»: серия ударов кулаками, потом руки к шлему с покачиванием
     const s = Math.sin(beat);
@@ -705,7 +770,7 @@ function landEntity(s,e){
   let tries = 0;
   while(collides(s,e.x,e.y,e.r) && tries++<40){ e.x = clamp(e.x+rand(-60,60),e.r,WORLD-e.r); e.y = clamp(e.y+rand(-60,60),e.r,WORLD-e.r); }
   burst(s,e.x,e.y,'#dfe8ff',10,140);
-  if(!s.zone.active && e.isPlayer){ s.zone.active = true; addFeed(s,'🎵 6 и 7 — танцы!','#ffe95c'); }
+  if(!s.zone.active && e.isPlayer){ s.zone.active = true; addFeed(s,'🎵 клавиши 6–9 — танцы!','#ffe95c'); }
 }
 
 function updatePlayer(s,dt){
@@ -1380,6 +1445,7 @@ function syncEntity(s,e,colorHex){
 
   // анимация: ходьба (с коленями и локтями), полёт на парашюте, танец, рука с оружием
   ud.armL.rotation.x = .12; ud.armR.rotation.x = -.12;   // база (танец меняет)
+  ud.legL.rotation.x = ud.legR.rotation.x = 0;
   ud.headG.rotation.y = ud.headG.rotation.z = 0;
   const sw = (e.moving && e.air<=0) ? Math.sin(s.time*10 + ud.phase)*.55 : 0;
   if(e.emote && e.air<=0){
@@ -1875,17 +1941,20 @@ addEventListener('keydown', e=>{
   keys[k] = true;
   if(k===' ') e.preventDefault();
   if(!state || state.phase!=='game') return;
+  initAudio();                        // жест пользователя — будим звук, если браузер его приостановил
   const p = state.player;
   if(k==='m'){
     muted = !muted;
     if(!muted && p.emote) startMusic(EMOTES[p.emote.name].music, p, 1);
   }
   if(k===' ' && p.onBus){ playerJump(state); return; }
-  if(p.dead || p.onBus) return;
-  if(!e.repeat){
+  if(!e.repeat){                      // до проверки onBus — чтобы на автобусе показать подсказку
     if(k==='6') startEmote(state,p,'biker');
     if(k==='7') startEmote(state,p,'griddy');
+    if(k==='8') startEmote(state,p,'floss');
+    if(k==='9') startEmote(state,p,'classic');
   }
+  if(p.dead || p.onBus) return;
   if(k==='r'){
     const g = curGun(p), def = WEAPONS[g.type];
     if(!def.melee && g.reloadT<=0 && g.ammo<def.mag) g.reloadT = def.reload;
@@ -1915,6 +1984,7 @@ document.addEventListener('mousemove', e=>{
 });
 canvas.addEventListener('mousedown', e=>{
   if(!state || state.phase!=='game') return;
+  initAudio();                        // жест пользователя — будим звук
   if(!pointerLocked){
     canvas.requestPointerLock && canvas.requestPointerLock();
     return;
