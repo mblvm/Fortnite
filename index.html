@@ -442,7 +442,7 @@ function makeEntity(name,isPlayer){
     x:0, y:0, r:16, aim:0,
     hp:100, shield:0, dead:false,
     mats:isPlayer?0:60,
-    slots:[ {type:'pickaxe',rarity:0} ],   // слот 0 — кирка
+    slots:[ {type:'pickaxe',rarity:0,ammo:0,reloadT:0} ],   // слот 0 — кирка
     slot:0,
     fireCd:0, air:0, airTot:0, landX:0, landY:0,
     onBus:isPlayer,
